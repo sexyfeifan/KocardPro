@@ -1,6 +1,6 @@
 {
   "name": "kocard-pro",
-  "version": "1.4.9",
+  "version": "1.5.0",
   "description": "Professional DIT media backup software",
   "main": "out/main/index.js",
   "productName": "KocardPro",

@@ -472,14 +472,14 @@ export function NewTask(): JSX.Element {
               ))}
             </div>
             <div className="px-6 py-3 border-t border-[#1e1e1e]">
-              <p className="text-xs text-gray-600 text-center">点击空白处关闭 · 备卡/二备模式直接选源和目的地即可，无需配置项目</p>
+              <p className="text-xs text-gray-600 text-center">点击空白处关闭 · 备卡/镜像模式直接选源和目的地即可，无需配置项目</p>
             </div>
           </div>
         </div>
       )}
 
       {/* Mode toggle */}
-      <div className="flex gap-1 p-1 bg-[#111] border border-[#2a2a2a] rounded-xl mb-5">
+      <div className="flex gap-1 p-1 bg-[#111] border border-[#2a2a2a] rounded-xl mb-4">
         <button
           onClick={() => setMode('card')}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -498,7 +498,7 @@ export function NewTask(): JSX.Element {
               : 'text-gray-500 hover:text-gray-300'
           }`}
         >
-          二备模式
+          镜像模式
         </button>
         <button
           onClick={() => setMode('advanced')}
@@ -521,12 +521,63 @@ export function NewTask(): JSX.Element {
         )}
       </div>
 
-      {/* Mirror mode description */}
-      {mode === 'mirror' && (
-        <div className="mb-5 px-4 py-3 bg-purple-600/10 border border-purple-500/20 rounded-xl">
-          <p className="text-xs text-purple-300/80">
-            二备模式：目的地将得到素材源的完整镜像，文件名与目录结构完全保持原样（A = B）。
+      {/* Mode description banner */}
+      {mode === 'card' && (
+        <div className="mb-5 px-4 py-3.5 bg-blue-600/8 border border-blue-500/20 rounded-xl flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">备卡模式 · Card Mode</span>
+          </div>
+          <p className="text-xs text-gray-400 leading-relaxed">
+            将素材卡中的文件备份到指定目的地。备份目录以「卷名_时间戳」命名，确保每次备份可唯一追溯。支持同时备份到多个目的地，全部目的地备份完成后逐文件哈希校验。
           </p>
+          <div className="flex flex-col gap-1">
+            {[
+              { step: '①', text: '选择素材卡或文件夹作为素材源' },
+              { step: '②', text: '添加一个或多个目的地目录' },
+              { step: '③', text: '点击开始备份，完成后自动哈希校验' },
+            ].map(({ step, text }) => (
+              <p key={step} className="text-xs text-blue-300/60"><span className="mr-1.5">{step}</span>{text}</p>
+            ))}
+          </div>
+        </div>
+      )}
+      {mode === 'mirror' && (
+        <div className="mb-5 px-4 py-3.5 bg-purple-600/8 border border-purple-500/20 rounded-xl flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">镜像模式 · Mirror Mode</span>
+          </div>
+          <p className="text-xs text-gray-400 leading-relaxed">
+            完整镜像素材源的目录结构与文件名，目的地内容与素材源完全一致（A = B）。适用于需要制作完全相同副本的场景，例如将卡内容原封不动同步到多块硬盘。
+          </p>
+          <div className="flex flex-col gap-1">
+            {[
+              { step: '①', text: '选择素材卡或文件夹作为素材源' },
+              { step: '②', text: '添加一个或多个目的地（均得到相同镜像）' },
+              { step: '③', text: '开始备份，目录结构与文件名原样保留' },
+            ].map(({ step, text }) => (
+              <p key={step} className="text-xs text-purple-300/60"><span className="mr-1.5">{step}</span>{text}</p>
+            ))}
+          </div>
+        </div>
+      )}
+      {mode === 'advanced' && (
+        <div className="mb-5 px-4 py-3.5 bg-blue-600/8 border border-blue-500/20 rounded-xl flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">高级模式 · Advanced Mode</span>
+          </div>
+          <p className="text-xs text-gray-400 leading-relaxed">
+            关联已创建的项目，自动识别素材卡、自动填充目的地路径，按「项目 / 日期 / 机位 / 卷名_时间戳」层级归档。适合多机位、多日拍摄的系统化管理工作流。
+          </p>
+          <div className="flex flex-col gap-1">
+            {[
+              { step: '①', text: '在项目管理中提前创建项目并预建目录结构' },
+              { step: '②', text: '选择项目，系统自动填入目的地与拍摄日期' },
+              { step: '③', text: '选择日期、机位、子位置，自动解析完整备份路径' },
+              { step: '④', text: '确认卷名后开始备份，结果按层级自动归档' },
+            ].map(({ step, text }) => (
+              <p key={step} className="text-xs text-blue-300/60"><span className="mr-1.5">{step}</span>{text}</p>
+            ))}
+          </div>
         </div>
       )}
 
@@ -797,7 +848,7 @@ export function NewTask(): JSX.Element {
 
         {!canStart && (
           <p className="text-center text-xs text-gray-600">
-            {mode === 'card' || mode === 'mirror'
+          {mode === 'card' || mode === 'mirror'
               ? '请选择素材源和至少一个目的地'
               : resolvedPath === null
                 ? '请选择素材源、机位，或添加手动目的地'
