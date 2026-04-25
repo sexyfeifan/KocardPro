@@ -1,0 +1,419 @@
+import * as fs from 'fs'
+import * as path from 'path'
+import * as crypto from 'crypto'
+import { EventEmitter } from 'events'
+import { v4 as uuidv4 } from 'uuid'
+import type {
+  BackupTask,
+  FileRecord,
+  HashAlgorithm,
+  ProgressPayload,
+  TaskConfig
+} from '../types'
+
+export class BackupEngine extends EventEmitter {
+  private tasks: Map<string, BackupTask> = new Map()
+  private cancelFlags: Map<string, boolean> = new Map()
+
+  createTask(config: TaskConfig): BackupTask {
+    const now = new Date()
+    const pad = (n: number, len = 2): string => String(n).padStart(len, '0')
+    const timestamp =
+      String(now.getFullYear()) +
+      pad(now.getMonth() + 1) +
+      pad(now.getDate()) +
+      pad(now.getHours()) +
+      pad(now.getMinutes())
+
+    // Date folder from shootingDate (YYYY-MM-DD → YYYYMMDD); empty string = no date layer (simple mode)
+    const shootingDate = config.shootingDate
+      ? config.shootingDate.replace(/-/g, '')
+      : ''
+
+    // Top-level project folder: {YYYYMMDD}{projectName} or just {YYYYMMDD}
+    const projectFolder = shootingDate
+      ? (config.projectName ? `${shootingDate}${config.projectName}` : shootingDate)
+      : ''
+
+    const volumeName = config.namingTemplate
+      ? `${config.namingTemplate}_${timestamp}`
+      : `Untitled_${timestamp}`
+
+    const task: BackupTask = {
+      id: uuidv4(),
+      name: volumeName,
+      sourcePath: config.sourcePath,
+      devices: config.devices,
+      destinations: config.destinationPaths.map((p, i) => ({
+        id: uuidv4(),
+        path: p,
+        label: `备份 ${i + 1}`,
+        verified: false,
+        bytesWritten: 0
+      })),
+      hashAlgorithm: config.hashAlgorithm,
+      namingTemplate: volumeName,
+      shootingDateFolder: projectFolder,
+      copyMode: config.copyMode ?? 'normal',
+      status: 'pending',
+      totalFiles: 0,
+      completedFiles: 0,
+      totalBytes: 0,
+      transferredBytes: 0,
+      speedBps: 0,
+      eta: 0,
+      currentFile: '',
+      verifyLog: [],
+      fileRecords: []
+    }
+    this.tasks.set(task.id, task)
+    return task
+  }
+
+  loadTask(task: BackupTask): void {
+    this.tasks.set(task.id, task)
+  }
+
+  getTask(taskId: string): BackupTask | undefined {
+    return this.tasks.get(taskId)
+  }
+
+  getAllTasks(): BackupTask[] {
+    return Array.from(this.tasks.values())
+  }
+
+  cancelTask(taskId: string): void {
+    this.cancelFlags.set(taskId, true)
+  }
+
+  deleteTask(taskId: string): void {
+    this.tasks.delete(taskId)
+    this.cancelFlags.delete(taskId)
+  }
+
+  async startTask(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId)
+    if (!task) throw new Error(`Task ${taskId} not found`)
+
+    this.cancelFlags.set(taskId, false)
+    task.status = 'running'
+    task.startedAt = Date.now()
+    task.verifyLog = []
+
+    const volumeName = task.namingTemplate
+
+    try {
+      const files = await this.enumerateFiles(task.sourcePath, undefined, task)
+      task.totalFiles = files.length
+      task.totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+      this.emitProgress(task)
+
+      if (task.copyMode === 'mirror') {
+        // Mirror mode: dest is an exact A=B copy — no folder wrapping, preserve relative paths
+        for (const dest of task.destinations) {
+          await fs.promises.mkdir(dest.path, { recursive: true })
+          dest.resolvedPath = dest.path
+        }
+      } else {
+        // #B fix: distinguish "has project name" (length > 8) from "date-only" (exactly 8 digits)
+        const projectFolder = task.shootingDateFolder ?? ''
+        const hasProjectName = projectFolder.length > 8
+        const dateSubFolder = projectFolder.length >= 8 ? projectFolder.slice(0, 8) : ''
+
+        for (const dest of task.destinations) {
+          const deviceSubfolders = task.devices.length > 0 ? task.devices : ['']
+          for (const device of deviceSubfolders) {
+            const deviceRoot = this.resolveDeviceRoot(dest.path, projectFolder, hasProjectName, dateSubFolder, device, volumeName)
+            await fs.promises.mkdir(deviceRoot, { recursive: true })
+          }
+          dest.resolvedPath = projectFolder ? path.join(dest.path, projectFolder) : dest.path
+        }
+      }
+
+      let speedSamples: number[] = []
+      let lastBytes = 0
+      let lastTime = Date.now()
+
+      for (const file of files) {
+        if (this.cancelFlags.get(taskId)) {
+          task.status = 'cancelled'
+          this.emitProgress(task)
+          return
+        }
+
+        task.currentFile = file.name
+        this.emitProgress(task)
+
+        const record = await this.copyFileToAllDestinationsParallel(
+          task,
+          file,
+          (bytesWritten) => {
+            task.transferredBytes += bytesWritten
+            const now = Date.now()
+            const elapsed = (now - lastTime) / 1000
+            if (elapsed >= 0.5) {
+              const currentSpeed = (task.transferredBytes - lastBytes) / elapsed
+              speedSamples.push(currentSpeed)
+              if (speedSamples.length > 5) speedSamples.shift()
+              task.speedBps = speedSamples.reduce((a, b) => a + b, 0) / speedSamples.length
+              lastBytes = task.transferredBytes
+              lastTime = now
+              const remaining = task.totalBytes - task.transferredBytes
+              task.eta = task.speedBps > 0 ? remaining / task.speedBps : 0
+              this.emitProgress(task)
+            }
+          }
+        )
+
+        task.fileRecords.push(record)
+        task.completedFiles++
+        this.emitProgress(task)
+      }
+
+      task.status = 'verifying'
+      this.emitProgress(task)
+      await this.verifyAllDestinations(task)
+
+      task.status = 'completed'
+      task.completedAt = Date.now()
+      task.currentFile = ''
+      task.speedBps = 0
+      task.eta = 0
+      this.emitProgress(task)
+    } catch (err) {
+      task.status = 'failed'
+      task.errorMessage = (err as Error).message
+      this.emitProgress(task)
+      throw err
+    }
+  }
+
+  // #B fix: single source of truth for device root path resolution
+  private resolveDeviceRoot(
+    destPath: string,
+    projectFolder: string,
+    hasProjectName: boolean,
+    dateSubFolder: string,
+    device: string,
+    volumeName: string
+  ): string {
+    if (projectFolder && hasProjectName) {
+      // advanced + project name: dest/{YYYYMMDD}{name}/{YYYYMMDD}/{device}/{vol}
+      return device
+        ? path.join(destPath, projectFolder, dateSubFolder, device, volumeName)
+        : path.join(destPath, projectFolder, dateSubFolder, volumeName)
+    } else if (projectFolder) {
+      // advanced + date only: dest/{YYYYMMDD}/{device}/{vol}
+      return device
+        ? path.join(destPath, projectFolder, device, volumeName)
+        : path.join(destPath, projectFolder, volumeName)
+    } else {
+      // simple mode: dest/{device}/{vol}
+      return device
+        ? path.join(destPath, device, volumeName)
+        : path.join(destPath, volumeName)
+    }
+  }
+
+  private async copyFileToAllDestinationsParallel(
+    task: BackupTask,
+    file: { name: string; relativePath: string; size: number; absolutePath: string },
+    onProgress: (bytes: number) => void
+  ): Promise<FileRecord> {
+    const srcChecksum = await this.hashFile(file.absolutePath, task.hashAlgorithm)
+
+    const projectFolder = task.shootingDateFolder ?? ''
+    const hasProjectName = projectFolder.length > 8
+    const dateSubFolder = projectFolder.length >= 8 ? projectFolder.slice(0, 8) : ''
+    const volumeName = task.namingTemplate
+    const deviceSubfolders = task.devices.length > 0 ? task.devices : ['']
+
+    const destResults = await Promise.all(
+      task.destinations.map(async (dest) => {
+        let destFilePath: string
+        if (task.copyMode === 'mirror') {
+          // Mirror mode: flat A=B copy directly into dest.path
+          destFilePath = path.join(dest.path, file.relativePath)
+        } else {
+          // #2 cleanup: with single-device enforcement in UI, deviceSubfolders always has 1 entry
+          const device = deviceSubfolders[0]
+          const deviceRoot = this.resolveDeviceRoot(dest.path, projectFolder, hasProjectName, dateSubFolder, device, volumeName)
+          destFilePath = path.join(deviceRoot, file.relativePath)
+        }
+        await fs.promises.mkdir(path.dirname(destFilePath), { recursive: true })
+
+        // #5 fix: pass cancel check into copyFile so large-file cancel is effective
+        await this.copyFile(file.absolutePath, destFilePath, (bytes) => {
+          dest.bytesWritten += bytes
+          onProgress(bytes / task.destinations.length)
+        }, task.id)
+
+        const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
+        const verified = destChecksum === srcChecksum
+        if (!verified) {
+          dest.error = `校验失败: ${file.relativePath}`
+        }
+        return { path: destFilePath, checksum: destChecksum, verified }
+      })
+    )
+
+    return {
+      name: file.name,
+      relativePath: file.relativePath,
+      size: file.size,
+      srcChecksum,
+      destinations: destResults
+    }
+  }
+
+  // #5 fix: accepts taskId to check cancel flag and destroy streams on cancel
+  private copyFile(
+    src: string,
+    dest: string,
+    onProgress: (bytes: number) => void,
+    taskId?: string
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
+      const writeStream = fs.createWriteStream(dest)
+
+      readStream.on('data', (chunk: Buffer | string) => {
+        if (taskId && this.cancelFlags.get(taskId)) {
+          readStream.destroy()
+          writeStream.destroy()
+          return
+        }
+        onProgress(Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(chunk))
+      })
+
+      readStream.on('error', (err) => {
+        writeStream.destroy()
+        reject(err)
+      })
+      writeStream.on('error', reject)
+      writeStream.on('finish', resolve)
+      readStream.on('close', () => {
+        // stream was destroyed (cancelled) — resolve cleanly so the outer cancel check handles it
+        if (taskId && this.cancelFlags.get(taskId)) resolve()
+      })
+
+      readStream.pipe(writeStream)
+    })
+  }
+
+  private hashFile(filePath: string, algorithm: HashAlgorithm): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash(algorithm)
+      const stream = fs.createReadStream(filePath, { highWaterMark: 2 * 1024 * 1024 })
+      stream.on('data', (chunk) => hash.update(chunk))
+      stream.on('end', () => resolve(hash.digest('hex')))
+      stream.on('error', reject)
+    })
+  }
+
+  // #8 + #3 fix: use cached checksums from fileRecords (no third hash pass) and write verified back
+  private async verifyAllDestinations(task: BackupTask): Promise<void> {
+    task.verifyLog = []
+    task.verifyCompletedFiles = 0
+    task.verifyTotalFiles = task.fileRecords.length * task.destinations.length
+
+    for (let dIdx = 0; dIdx < task.destinations.length; dIdx++) {
+      const dest = task.destinations[dIdx]
+      let allVerified = true
+
+      for (let rIdx = 0; rIdx < task.fileRecords.length; rIdx++) {
+        if (this.cancelFlags.get(task.id)) break
+
+        const record = task.fileRecords[rIdx]
+        const destEntry = record.destinations[dIdx]
+
+        if (!destEntry) {
+          allVerified = false
+          task.verifyLog.push(`✗ ${record.name} 目标记录缺失`)
+          if (task.verifyLog.length > 100) task.verifyLog.shift()
+          task.verifyCompletedFiles++
+          this.emitProgress(task)
+          continue
+        }
+
+        // Use cached copy-time checksum — no re-hashing needed
+        const verified = destEntry.checksum === record.srcChecksum
+        destEntry.verified = verified
+
+        if (!verified) {
+          allVerified = false
+          task.verifyLog.push(`✗ ${record.name} [${dest.path.split('/').pop() || dest.path}]`)
+        } else {
+          task.verifyLog.push(`✓ ${record.name} [${dest.path.split('/').pop() || dest.path}]`)
+        }
+        if (task.verifyLog.length > 100) task.verifyLog.shift()
+        task.verifyCompletedFiles++
+        this.emitProgress(task)
+      }
+
+      dest.verified = allVerified
+    }
+  }
+
+  private async enumerateFiles(
+    dirPath: string,
+    baseDir?: string,
+    task?: BackupTask
+  ): Promise<Array<{ name: string; relativePath: string; size: number; absolutePath: string }>> {
+    const base = baseDir ?? dirPath
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
+    const results: Array<{
+      name: string
+      relativePath: string
+      size: number
+      absolutePath: string
+    }> = []
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) {
+        // #9 fix: log skipped hidden files
+        if (task) {
+          task.verifyLog.push(`[跳过] ${path.relative(base, path.join(dirPath, entry.name))}`)
+          if (task.verifyLog.length > 100) task.verifyLog.shift()
+        }
+        continue
+      }
+      const fullPath = path.join(dirPath, entry.name)
+      if (entry.isDirectory()) {
+        const nested = await this.enumerateFiles(fullPath, base, task)
+        results.push(...nested)
+      } else if (entry.isFile()) {
+        const stat = await fs.promises.stat(fullPath)
+        results.push({
+          name: entry.name,
+          relativePath: path.relative(base, fullPath),
+          size: stat.size,
+          absolutePath: fullPath
+        })
+      }
+    }
+    return results
+  }
+
+  private emitProgress(task: BackupTask): void {
+    const payload: ProgressPayload = {
+      taskId: task.id,
+      status: task.status,
+      totalFiles: task.totalFiles,
+      completedFiles: task.completedFiles,
+      totalBytes: task.totalBytes,
+      transferredBytes: task.transferredBytes,
+      speedBps: task.speedBps,
+      eta: task.eta,
+      currentFile: task.currentFile,
+      verifyLog: [...task.verifyLog],
+      destinations: task.destinations,
+      errorMessage: task.errorMessage,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+      verifyCompletedFiles: task.verifyCompletedFiles,
+      verifyTotalFiles: task.verifyTotalFiles
+    }
+    this.emit('progress', payload)
+  }
+}

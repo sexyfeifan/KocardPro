@@ -1,0 +1,107 @@
+export type HashAlgorithm = 'md5' | 'sha1' | 'sha256'
+export type TaskStatus = 'pending' | 'running' | 'verifying' | 'completed' | 'failed' | 'cancelled'
+export type CopyMode = 'normal' | 'mirror'
+
+export interface Destination {
+  id: string
+  path: string
+  resolvedPath?: string
+  label: string
+  verified: boolean
+  checksum?: string
+  bytesWritten: number
+  error?: string
+}
+
+export interface FileRecord {
+  name: string
+  relativePath: string
+  size: number
+  srcChecksum: string
+  destinations: Array<{
+    path: string
+    checksum: string
+    verified: boolean
+  }>
+}
+
+export interface BackupTask {
+  id: string
+  name: string
+  sourcePath: string
+  devices: string[]
+  destinations: Destination[]
+  hashAlgorithm: HashAlgorithm
+  namingTemplate: string
+  shootingDateFolder?: string
+  copyMode?: CopyMode
+  status: TaskStatus
+  totalFiles: number
+  completedFiles: number
+  totalBytes: number
+  transferredBytes: number
+  speedBps: number
+  eta: number
+  currentFile: string
+  verifyLog: string[]
+  startedAt?: number
+  completedAt?: number
+  verifyCompletedFiles?: number
+  verifyTotalFiles?: number
+  errorMessage?: string
+  fileRecords: FileRecord[]
+}
+
+export interface TaskConfig {
+  name: string
+  sourcePath: string
+  devices: string[]
+  destinationPaths: string[]
+  hashAlgorithm: HashAlgorithm
+  namingTemplate: string
+  shootingDate: string
+  projectName?: string
+  copyMode?: CopyMode
+}
+
+export interface ProgressPayload {
+  taskId: string
+  status: TaskStatus
+  totalFiles: number
+  completedFiles: number
+  totalBytes: number
+  transferredBytes: number
+  speedBps: number
+  eta: number
+  currentFile: string
+  verifyLog: string[]
+  destinations: Destination[]
+  errorMessage?: string
+  startedAt?: number
+  completedAt?: number
+  verifyCompletedFiles?: number
+  verifyTotalFiles?: number
+}
+
+export interface DriveInfo {
+  path: string
+  label: string
+  total: number
+  free: number
+  used: number
+  type: string
+}
+
+export interface ProjectConfig {
+  id: string
+  name: string
+  devices: string[]
+  volumePrefix: string
+  shootingDate?: string
+  shootingDateStart?: string
+  shootingDateEnd?: string
+  devicePositions?: Record<string, string[]>
+  destinationPaths?: string[]
+  status?: 'active' | 'archived'
+  createdAt?: number
+}
