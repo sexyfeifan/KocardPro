@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { FolderOpen, Plus, Trash2, Play, ChevronDown, CheckCircle, HelpCircle, X, RefreshCw, Zap } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Play, ChevronDown, CheckCircle, HelpCircle, X, RefreshCw, Zap, HardDrive } from 'lucide-react'
 import { useTaskStore } from '../store/taskStore'
 import type { VolumeInfo } from '../types'
 
@@ -48,6 +48,7 @@ export function NewTask(): JSX.Element {
   const [refreshingProjects, setRefreshingProjects] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [detectedSources, setDetectedSources] = useState<VolumeInfo[]>([])
+  const [sourceTab, setSourceTab] = useState<'card' | 'custom'>('card')
   const autoDetectedRef = useRef(false)
 
   // Resolved path from project structure
@@ -65,26 +66,25 @@ export function NewTask(): JSX.Element {
     if (mode === 'advanced') loadProjects()
   }, [mode])
 
-  // Scan for source volumes in advanced mode — poll every 5s
+  // Scan for source volumes in all modes — poll every 5s
   const scanSources = useCallback(async () => {
     const vols = await window.api.listVolumes()
     setDetectedSources(vols.filter((v) => v.deviceType === 'source'))
   }, [])
 
   useEffect(() => {
-    if (mode !== 'advanced') {
-      setDetectedSources([])
-      autoDetectedRef.current = false
-      return
-    }
     scanSources()
     const id = setInterval(scanSources, 5000)
     return () => clearInterval(id)
-  }, [mode, scanSources])
+  }, [scanSources])
+
+  // In advanced mode, reset detectedSources on mode exit (keep for card/mirror too now)
+  useEffect(() => {
+    if (mode !== 'advanced') return
+  }, [mode])
 
   // Auto-fill source when exactly 1 source detected and none selected yet
   useEffect(() => {
-    if (mode !== 'advanced') return
     if (sourcePath !== '' || autoDetectedRef.current) return
     if (detectedSources.length !== 1) return
     const vol = detectedSources[0]
@@ -94,7 +94,7 @@ export function NewTask(): JSX.Element {
       .replace(/_\d{12}$/, '')
     setVolumePrefix(volName)
     autoDetectedRef.current = true
-  }, [mode, detectedSources, sourcePath])
+  }, [detectedSources, sourcePath])
 
   // Projects sorted newest-first
   const activeProjects = useMemo(
@@ -270,91 +270,156 @@ export function NewTask(): JSX.Element {
     }
   }
 
-  const sourceSection = (
-    <div className="glass-card p-5">
-      <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-        素材源
-      </label>
-      <button
-        onClick={selectSource}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm
-          ${sourcePath
-            ? 'bg-blue-600/10 border-blue-500/30 text-blue-300'
-            : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#444] hover:text-gray-400 border-dashed'
-          }`}
-      >
-        <FolderOpen size={16} className="shrink-0" />
-        <span className="truncate text-left">{sourcePath || '点击选择素材卡或文件夹...'}</span>
-      </button>
-      {sourcePath && (
-        <p className="text-xs text-gray-600 mt-1.5 font-mono break-all">{sourcePath}</p>
-      )}
-    </div>
-  )
+  const isMirror = mode === 'mirror'
 
-  const isAutoDetected = autoDetectedRef.current && sourcePath !== ''
+  const pickVolume = (vol: VolumeInfo) => {
+    setSourcePath(vol.path)
+    const m = vol.path.match(/^\/Volumes\/([^/]+)/)
+    const n = (m ? m[1] : (vol.path.split('/').pop() || 'Untitled')).replace(/_\d{12}$/, '')
+    setVolumePrefix(n)
+    autoDetectedRef.current = true
+  }
 
-  const advancedSourceSection = (
+  const tabbedSourceSection = (
     <div className="glass-card p-5">
+      {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-          素材源
-        </label>
+        <div className="flex items-center gap-2">
+          <HardDrive size={14} className="text-gray-400" />
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+            数据源
+          </label>
+          {autoDetectedRef.current && sourcePath && (
+            <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 font-semibold">
+              <Zap size={9} />
+              自动识别
+            </span>
+          )}
+        </div>
         {sourcePath && (
           <button
-            onClick={selectSource}
-            className="text-xs text-gray-500 hover:text-gray-300 transition-colors px-2 py-0.5 rounded-lg hover:bg-white/5"
+            onClick={() => { setSourcePath(''); autoDetectedRef.current = false; setVolumePrefix('Untitled') }}
+            className="text-xs text-gray-600 hover:text-gray-300 transition-colors px-2 py-0.5 rounded-lg hover:bg-white/5"
           >
-            更换
+            清除
           </button>
         )}
       </div>
 
-      {/* Multi-source picker — shown when multiple sources and none selected */}
-      {!sourcePath && detectedSources.length > 1 && (
-        <div className="flex flex-col gap-1.5 mb-3">
-          <p className="text-xs text-amber-400/80 mb-1">检测到多个素材源，请选择：</p>
-          {detectedSources.map((vol) => (
-            <button
-              key={vol.path}
-              onClick={() => {
-                setSourcePath(vol.path)
-                const m = vol.path.match(/^\/Volumes\/([^/]+)/)
-                const n = (m ? m[1] : (vol.path.split('/').pop() || 'Untitled')).replace(/_\d{12}$/, '')
-                setVolumePrefix(n)
-                autoDetectedRef.current = true
-              }}
-              className="w-full text-left px-3 py-2.5 rounded-xl border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 transition-colors"
-            >
-              <p className="text-sm font-medium text-amber-300">{vol.name}</p>
-              <p className="text-xs text-gray-500 font-mono mt-0.5 break-all">{vol.path}</p>
-            </button>
-          ))}
-        </div>
-      )}
-
-      <button
-        onClick={selectSource}
-        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm
-          ${sourcePath
-            ? 'bg-blue-600/10 border-blue-500/30 text-blue-300'
-            : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#444] hover:text-gray-400 border-dashed'
+      {/* Tabs */}
+      <div className="flex gap-0 mb-4 border-b border-[#2a2a2a]">
+        <button
+          onClick={() => setSourceTab('card')}
+          className={`px-4 py-2 text-xs font-medium transition-all border-b-2 -mb-px ${
+            sourceTab === 'card'
+              ? mode === 'mirror'
+                ? 'border-purple-500 text-purple-400'
+                : 'border-blue-500 text-blue-400'
+              : 'border-transparent text-gray-500 hover:text-gray-300'
           }`}
-      >
-        <FolderOpen size={16} className="shrink-0" />
-        <span className="truncate text-left flex-1">{sourcePath || '点击选择素材卡或文件夹...'}</span>
-        {isAutoDetected && (
-          <span className="shrink-0 flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 border border-amber-500/25 font-semibold">
-            <Zap size={9} />
-            自动识别
-          </span>
-        )}
-      </button>
-      {sourcePath && (
-        <p className="text-xs text-gray-600 mt-1.5 font-mono break-all">{sourcePath}</p>
+        >
+          素材卡
+        </button>
+        <button
+          onClick={() => setSourceTab('custom')}
+          className={`px-4 py-2 text-xs font-medium transition-all border-b-2 -mb-px ${
+            sourceTab === 'custom'
+              ? mode === 'mirror'
+                ? 'border-purple-500 text-purple-400'
+                : 'border-blue-500 text-blue-400'
+              : 'border-transparent text-gray-500 hover:text-gray-300'
+          }`}
+        >
+          自定义
+        </button>
+      </div>
+
+      {sourceTab === 'card' ? (
+        <div>
+          {detectedSources.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-6 rounded-xl border border-dashed border-[#2a2a2a] text-center">
+              <HardDrive size={22} className="text-gray-700" />
+              <p className="text-xs text-gray-600">未检测到素材卡</p>
+              <p className="text-[11px] text-gray-700">插入 CF/SD/SxS 卡后自动显示</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {detectedSources.map((vol) => {
+                const isSelected = sourcePath === vol.path
+                return (
+                  <button
+                    key={vol.path}
+                    onClick={() => pickVolume(vol)}
+                    className={`w-full text-left flex items-center gap-3 px-4 py-3.5 rounded-xl border transition-all ${
+                      isSelected
+                        ? isMirror
+                          ? 'bg-purple-600/10 border-purple-500/30'
+                          : 'bg-blue-600/10 border-blue-500/30'
+                        : 'bg-[#111] border-[#2a2a2a] hover:border-[#3a3a3a] hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
+                      isSelected
+                        ? isMirror ? 'bg-purple-600/20' : 'bg-blue-600/20'
+                        : 'bg-[#1a1a1a]'
+                    }`}>
+                      <FolderOpen size={18} className={isSelected
+                        ? isMirror ? 'text-purple-400' : 'text-blue-400'
+                        : 'text-gray-500'
+                      } />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold truncate ${isSelected
+                        ? isMirror ? 'text-purple-200' : 'text-blue-200'
+                        : 'text-gray-200'
+                      }`}>
+                        {vol.name}
+                      </p>
+                      {vol.total != null && vol.total > 0 && (
+                        <p className="text-xs text-gray-500 mt-0.5">{formatBytes(vol.total)}</p>
+                      )}
+                    </div>
+                    {isSelected && (
+                      <CheckCircle size={15} className={isMirror ? 'text-purple-400 shrink-0' : 'text-blue-400 shrink-0'} />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+          {sourcePath && !detectedSources.find((v) => v.path === sourcePath) && (
+            <div className={`mt-2 px-3 py-2.5 rounded-xl border ${
+              isMirror ? 'bg-purple-600/8 border-purple-500/20' : 'bg-blue-600/8 border-blue-500/20'
+            }`}>
+              <p className={`text-xs font-mono break-all ${isMirror ? 'text-purple-300/70' : 'text-blue-300/70'}`}>{sourcePath}</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div>
+          <button
+            onClick={selectSource}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border transition-all text-sm ${
+              sourcePath
+                ? isMirror
+                  ? 'bg-purple-600/10 border-purple-500/30 text-purple-300'
+                  : 'bg-blue-600/10 border-blue-500/30 text-blue-300'
+                : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#444] hover:text-gray-400 border-dashed'
+            }`}
+          >
+            <FolderOpen size={16} className="shrink-0" />
+            <span className="truncate text-left flex-1">{sourcePath || '点击选择文件夹...'}</span>
+          </button>
+          {sourcePath && (
+            <p className="text-xs text-gray-600 mt-1.5 font-mono break-all">{sourcePath}</p>
+          )}
+        </div>
       )}
     </div>
   )
+
+  const sourceSection = tabbedSourceSection
+  const advancedSourceSection = tabbedSourceSection
 
   const destSection = (
     <div className="glass-card p-5">
@@ -491,6 +556,7 @@ export function NewTask(): JSX.Element {
             setSelectedDevice('')
             setSelectedPosition('')
             setResolvedPath(null)
+            setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'card'
@@ -511,6 +577,7 @@ export function NewTask(): JSX.Element {
             setSelectedDevice('')
             setSelectedPosition('')
             setResolvedPath(null)
+            setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'mirror'
@@ -531,6 +598,7 @@ export function NewTask(): JSX.Element {
             setSelectedDevice('')
             setSelectedPosition('')
             setResolvedPath(null)
+            setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'advanced'
