@@ -36,7 +36,7 @@ export function BackupHeatmap({ tasks, selectedDate, onSelectDate }: Props): JSX
   const dayMap = useMemo(() => {
     const map = new Map<string, DayData>()
     for (const t of tasks) {
-      if (t.status !== 'completed' && t.status !== 'failed' && t.status !== 'cancelled') continue
+      if (t.status !== 'completed') continue
       const ts = t.startedAt ?? t.completedAt
       if (!ts) continue
       const key = toDateKey(ts)
@@ -101,7 +101,8 @@ export function BackupHeatmap({ tasks, selectedDate, onSelectDate }: Props): JSX
   const handleMouseEnter = (e: React.MouseEvent, cell: { date: string; data: DayData | null }) => {
     if (!cell.data) return
     const rect = (e.target as HTMLElement).getBoundingClientRect()
-    setTooltip({ x: rect.left + rect.width / 2, y: rect.top - 8, data: cell.data })
+    const x = Math.max(70, Math.min(window.innerWidth - 70, rect.left + rect.width / 2))
+    setTooltip({ x, y: rect.top - 8, data: cell.data })
   }
 
   const handleClick = (date: string, data: DayData | null) => {

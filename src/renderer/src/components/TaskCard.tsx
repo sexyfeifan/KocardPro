@@ -1,6 +1,7 @@
-import { CheckCircle2, XCircle, Clock, Loader2, FolderOpen, FileDown, StopCircle, Trash2 } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2 } from 'lucide-react'
 import type { BackupTask } from '../types'
 import { useTaskStore } from '../store/taskStore'
+import { useState } from 'react'
 
 function formatBytes(b: number): string {
   if (b === 0) return '0 B'
@@ -48,6 +49,9 @@ export function TaskCard({ task }: Props): JSX.Element {
   const isActive = task.status === 'running' || task.status === 'verifying'
   const isDone = !isActive
 
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+
   const verifyTotal = task.verifyTotalFiles ?? 0
   const verifyDone = task.verifyCompletedFiles ?? 0
   const verifyProgress = verifyTotal > 0 ? (verifyDone / verifyTotal) * 100 : 0
@@ -60,10 +64,6 @@ export function TaskCard({ task }: Props): JSX.Element {
       await window.api.generateReport(task.id, savePath)
       window.api.revealInFinder(savePath)
     }
-  }
-
-  const handleReveal = () => {
-    if (task.destinations[0]) window.api.revealInFinder(task.destinations[0].path)
   }
 
   const handleDelete = () => deleteTask(task.id)
@@ -90,40 +90,67 @@ export function TaskCard({ task }: Props): JSX.Element {
         {/* Action buttons */}
         <div className="flex items-center gap-1 ml-3 shrink-0">
           {isActive && (
-            <button
-              onClick={handleCancel}
-              className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-              title="取消任务"
-            >
-              <StopCircle size={15} />
-            </button>
+            confirmCancel ? (
+              <>
+                <span className="text-xs text-red-400 mr-1">确认取消?</span>
+                <button
+                  onClick={handleCancel}
+                  className="px-2 py-1 rounded-lg text-xs text-red-400 bg-red-400/10 hover:bg-red-400/20 transition-colors"
+                >
+                  确认
+                </button>
+                <button
+                  onClick={() => setConfirmCancel(false)}
+                  className="px-2 py-1 rounded-lg text-xs text-gray-500 hover:bg-white/5 transition-colors"
+                >
+                  取消
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmCancel(true)}
+                className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                title="取消任务"
+              >
+                <StopCircle size={15} />
+              </button>
+            )
           )}
-          {task.status === 'completed' && (
-            <>
-              <button
-                onClick={handleReveal}
-                className="p-1.5 rounded-lg text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
-                title="在访达中显示"
-              >
-                <FolderOpen size={15} />
-              </button>
-              <button
-                onClick={handleExport}
-                className="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors"
-                title="导出备份报告"
-              >
-                <FileDown size={15} />
-              </button>
-            </>
+          {(task.status === 'completed' || task.status === 'failed') && (
+            <button
+              onClick={handleExport}
+              className="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-400/10 transition-colors"
+              title="导出备份报告"
+            >
+              <FileDown size={15} />
+            </button>
           )}
           {isDone && (
-            <button
-              onClick={handleDelete}
-              className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-              title="删除任务记录"
-            >
-              <Trash2 size={15} />
-            </button>
+            confirmDelete ? (
+              <>
+                <span className="text-xs text-red-400 mr-1">确认删除?</span>
+                <button
+                  onClick={handleDelete}
+                  className="px-2 py-1 rounded-lg text-xs text-red-400 bg-red-400/10 hover:bg-red-400/20 transition-colors"
+                >
+                  确认
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-2 py-1 rounded-lg text-xs text-gray-500 hover:bg-white/5 transition-colors"
+                >
+                  取消
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="p-1.5 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                title="删除任务记录"
+              >
+                <Trash2 size={15} />
+              </button>
+            )
           )}
         </div>
       </div>
@@ -248,24 +275,26 @@ export function TaskCard({ task }: Props): JSX.Element {
         </div>
       )}
 
-      {/* Destinations */}
+      {/* Destinations — each tag clickable to reveal in Finder */}
       <div className="flex flex-wrap gap-2">
         {task.destinations.map((dest) => (
-          <div
+          <button
             key={dest.id}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border
+            onClick={() => window.api.revealInFinder(dest.path)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border cursor-pointer transition-opacity hover:opacity-80
               ${dest.verified
                 ? 'bg-green-500/5 border-green-500/20 text-green-400'
                 : dest.error
                   ? 'bg-red-500/5 border-red-500/20 text-red-400'
                   : 'bg-[#1e1e1e] border-[#2a2a2a] text-gray-500'
               }`}
+            title={`在访达中显示: ${dest.path}`}
           >
             {dest.verified ? <CheckCircle2 size={10} /> : dest.error ? <XCircle size={10} /> : null}
-            <span className="max-w-[160px] truncate" title={dest.path}>
+            <span className="max-w-[160px] truncate">
               {dest.path.split('/').pop() || dest.path}
             </span>
-          </div>
+          </button>
         ))}
       </div>
 

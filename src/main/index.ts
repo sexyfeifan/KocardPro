@@ -48,8 +48,14 @@ function loadSettings(): AppSettings {
   }
 }
 
+function atomicWrite(filePath: string, data: string): void {
+  const tmp = filePath + '.tmp'
+  fs.writeFileSync(tmp, data, 'utf-8')
+  fs.renameSync(tmp, filePath)
+}
+
 function saveSettings(settings: AppSettings): void {
-  fs.writeFileSync(getSettingsPath(), JSON.stringify(settings, null, 2), 'utf-8')
+  atomicWrite(getSettingsPath(), JSON.stringify(settings, null, 2))
 }
 
 function loadPersistedTasks(): BackupTask[] {
@@ -63,7 +69,7 @@ function loadPersistedTasks(): BackupTask[] {
 
 function persistTasks(tasks: BackupTask[]): void {
   try {
-    fs.writeFileSync(getTasksPath(), JSON.stringify(tasks, null, 2), 'utf-8')
+    atomicWrite(getTasksPath(), JSON.stringify(tasks, null, 2))
   } catch (e) {
     console.error('Failed to persist tasks:', e)
   }
@@ -79,7 +85,7 @@ function loadProjects(): ProjectConfig[] {
 }
 
 function saveProjects(projects: ProjectConfig[]): void {
-  fs.writeFileSync(getProjectsPath(), JSON.stringify(projects, null, 2), 'utf-8')
+  atomicWrite(getProjectsPath(), JSON.stringify(projects, null, 2))
 }
 
 const backupEngine = new BackupEngine()

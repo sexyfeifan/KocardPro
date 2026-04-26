@@ -172,11 +172,13 @@ export function NewTask(): JSX.Element {
     let cancelled = false
     Promise.all(
       p.destinationPaths.map(async (path) => {
-        const info = await window.api.getDriveInfo(path)
+        const info = await window.api.getDriveInfo(path).catch(() => null)
         return { id: Math.random().toString(36).slice(2), path, driveInfo: info }
       })
     ).then((rows) => {
       if (!cancelled) setDestinations(rows)
+    }).catch(() => {
+      if (!cancelled) setDestinations([])
     })
     return () => { cancelled = true }
   }, [selectedProjectId, mode])
@@ -249,10 +251,18 @@ export function NewTask(): JSX.Element {
           ? [resolvedPath, ...destinations.map((d) => d.path)]
           : destinations.map((d) => d.path)
 
+      const hasOverlap = destPaths.some(
+        (dp) => dp === sourcePath || dp.startsWith(sourcePath + '/') || sourcePath.startsWith(dp + '/')
+      )
+      if (hasOverlap) {
+        alert('来源路径与目的地路径存在重叠，请重新选择。')
+        setIsStarting(false)
+        return
+      }
+
       const task = await window.api.createTask({
         name: '',
         sourcePath,
-        // card/mirror: no device folder; project: device folder
         devices: mode === 'project' ? [selectedDevice] : [],
         destinationPaths: destPaths,
         hashAlgorithm: defaultHash,
@@ -448,9 +458,9 @@ export function NewTask(): JSX.Element {
 
       <div className="flex flex-col gap-2 mb-3">
         {destinations.map((dest, idx) => (
-          <div key={dest.id} className="bg-[#111] border border-[#2a2a2a] rounded-xl px-4 py-3">
+          <div key={dest.id} className={`bg-[#111] border rounded-xl px-4 py-3 ${dest.driveInfo ? 'border-[#2a2a2a]' : 'border-amber-500/30'}`}>
             <div className="flex items-center gap-3">
-              <FolderOpen size={14} className="text-green-400 shrink-0" />
+              <FolderOpen size={14} className={`shrink-0 ${dest.driveInfo ? 'text-green-400' : 'text-amber-500'}`} />
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-gray-200 break-all">{dest.path}</p>
                 {dest.driveInfo ? (
@@ -466,7 +476,22 @@ export function NewTask(): JSX.Element {
                     </span>
                   </div>
                 ) : (
-                  <p className="text-xs text-red-400/70 mt-1">设备未连接</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <p className="text-xs text-amber-500/80 flex-1">设备未连接，请手动选择路径</p>
+                    <button
+                      onClick={async () => {
+                        const p = await window.api.selectDirectory()
+                        if (!p) return
+                        const info = await window.api.getDriveInfo(p).catch(() => null)
+                        setDestinations((prev) =>
+                          prev.map((d) => d.id === dest.id ? { ...d, path: p, driveInfo: info } : d)
+                        )
+                      }}
+                      className="shrink-0 text-xs text-amber-400 hover:text-amber-300 border border-amber-500/30 rounded-lg px-2 py-0.5 transition-colors"
+                    >
+                      选择路径
+                    </button>
+                  </div>
                 )}
               </div>
               <button
