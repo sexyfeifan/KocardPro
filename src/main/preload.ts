@@ -8,8 +8,8 @@ interface AppSettings {
 }
 
 contextBridge.exposeInMainWorld('api', {
-  selectDirectory: (): Promise<string | null> =>
-    ipcRenderer.invoke('dialog:selectDirectory'),
+  selectDirectory: (defaultPath?: string): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:selectDirectory', defaultPath),
 
   saveReport: (taskName: string): Promise<string | null> =>
     ipcRenderer.invoke('dialog:saveReport', taskName),

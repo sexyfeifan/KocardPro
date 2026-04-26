@@ -1,5 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'path'
+import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { exec } from 'child_process'
@@ -144,8 +145,11 @@ app.on('window-all-closed', () => {
 })
 
 function registerIpcHandlers(): void {
-  ipcMain.handle('dialog:selectDirectory', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory'] })
+  ipcMain.handle('dialog:selectDirectory', async (_, defaultPath?: string) => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      ...(defaultPath ? { defaultPath } : {})
+    })
     return result.filePaths[0] ?? null
   })
 
@@ -297,7 +301,7 @@ function registerIpcHandlers(): void {
               // Protocol — strongest signal
               if (/SD Card/i.test(protocol)) score += 5          // definitely a card
               if (/PCI-Express/i.test(protocol)) score += 3       // CFexpress/XQD via PCIe reader
-              if (/Thunderbolt/i.test(protocol)) score -= 4       // almost always a backup drive
+              if (/Thunderbolt/i.test(protocol)) score -= 3       // usually a backup drive; SxS also uses TB but name patterns catch it
               if (/USB/i.test(protocol)) score -= 1               // slight destination lean
 
               // File system
@@ -320,10 +324,14 @@ function registerIpcHandlers(): void {
               // Removable flag (unreliable on modern readers, but counts a little when present)
               if (isRemovable) score += 1
 
-              // Volume name patterns common on camera cards
+              // Volume name patterns common on camera cards (SD, CF, CFexpress, CFast, XQD, SxS)
               if (/^[A-Z]\d{3}$/.test(e.name) || // A001, B002
-                  /^(CARD|SD|CF|XQD|A7|SONY|CANON|NIKON|FUJI|PANA)/i.test(volNameLower) ||
+                  /^(CARD|SD|CF|XQD|SXS|CFAST|CFEXPRESS|A7|SONY|CANON|NIKON|FUJI|PANA)/i.test(volNameLower) ||
                   /_(A|B|C|CAM)\d*$/i.test(volNameLower)) score += 2
+
+              // DCIM directory presence is a strong camera-card signal
+              const hasDCIM = await fs.promises.access(path.join(volPath, 'DCIM')).then(() => true).catch(() => false)
+              if (hasDCIM) score += 3
 
               const deviceType = score >= 2 ? ('source' as const) : ('destination' as const)
 

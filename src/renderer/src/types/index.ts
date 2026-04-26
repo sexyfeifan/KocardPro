@@ -110,7 +110,7 @@ export interface VolumeInfo {
 declare global {
   interface Window {
     api: {
-      selectDirectory: () => Promise<string | null>
+      selectDirectory: (defaultPath?: string) => Promise<string | null>
       saveReport: (taskName: string) => Promise<string | null>
       createTask: (config: TaskConfig) => Promise<BackupTask>
       startTask: (taskId: string) => Promise<boolean>
