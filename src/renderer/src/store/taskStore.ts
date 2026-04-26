@@ -12,6 +12,7 @@ interface TaskStore {
   applyProgress: (payload: ProgressPayload) => void
   addTask: (task: BackupTask) => void
   deleteTask: (taskId: string) => Promise<void>
+  setPriority: (taskId: string, priority: boolean) => Promise<void>
   refreshTasks: () => Promise<void>
   loadProjects: () => Promise<void>
   loadDevices: () => Promise<void>
@@ -41,6 +42,13 @@ export const useTaskStore = create<TaskStore>((set) => ({
     set((state) => ({ tasks: state.tasks.filter((t) => t.id !== taskId) }))
   },
 
+  setPriority: async (taskId, priority) => {
+    await window.api.setPriority(taskId, priority)
+    set((state) => ({
+      tasks: state.tasks.map((t) => t.id === taskId ? { ...t, priority } : t)
+    }))
+  },
+
   applyProgress: (payload) =>
     set((state) => ({
       tasks: state.tasks.map((t) =>
@@ -61,7 +69,9 @@ export const useTaskStore = create<TaskStore>((set) => ({
               ...(payload.startedAt !== undefined && { startedAt: payload.startedAt }),
               ...(payload.completedAt !== undefined && { completedAt: payload.completedAt }),
               ...(payload.verifyCompletedFiles !== undefined && { verifyCompletedFiles: payload.verifyCompletedFiles }),
-              ...(payload.verifyTotalFiles !== undefined && { verifyTotalFiles: payload.verifyTotalFiles })
+              ...(payload.verifyTotalFiles !== undefined && { verifyTotalFiles: payload.verifyTotalFiles }),
+              ...(payload.skippedFiles !== undefined && { skippedFiles: payload.skippedFiles }),
+              ...(payload.skippedBytes !== undefined && { skippedBytes: payload.skippedBytes })
             }
           : t
       )

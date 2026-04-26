@@ -1,6 +1,7 @@
 export type HashAlgorithm = 'md5' | 'sha1' | 'sha256'
 export type TaskStatus = 'pending' | 'running' | 'verifying' | 'completed' | 'failed' | 'cancelled'
 export type CopyMode = 'normal' | 'mirror'
+export type DuplicateStrategy = 'skip' | 'suffix'
 
 export interface Destination {
   id: string
@@ -50,6 +51,11 @@ export interface BackupTask {
   verifyTotalFiles?: number
   errorMessage?: string
   fileRecords: FileRecord[]
+  skippedFiles?: number
+  skippedBytes?: number
+  priority?: boolean
+  duplicateStrategy?: DuplicateStrategy
+  generateThumbnails?: boolean
 }
 
 export interface TaskConfig {
@@ -62,6 +68,9 @@ export interface TaskConfig {
   shootingDate: string
   projectName?: string
   copyMode?: CopyMode
+  duplicateStrategy?: DuplicateStrategy
+  generateThumbnails?: boolean
+  priority?: boolean
 }
 
 export interface ProgressPayload {
@@ -81,6 +90,8 @@ export interface ProgressPayload {
   completedAt?: number
   verifyCompletedFiles?: number
   verifyTotalFiles?: number
+  skippedFiles?: number
+  skippedBytes?: number
 }
 
 export interface DriveInfo {

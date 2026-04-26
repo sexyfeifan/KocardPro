@@ -7,6 +7,8 @@ interface AppSettings {
   devices: string[]
   backupCount: number
   isUnlocked: boolean
+  defaultDuplicateStrategy?: 'skip' | 'suffix'
+  defaultGenerateThumbnails?: boolean
 }
 
 contextBridge.exposeInMainWorld('api', {
@@ -27,6 +29,9 @@ contextBridge.exposeInMainWorld('api', {
 
   deleteTask: (taskId: string) =>
     ipcRenderer.invoke('backup:deleteTask', taskId),
+
+  setPriority: (taskId: string, priority: boolean): Promise<void> =>
+    ipcRenderer.invoke('backup:setPriority', taskId, priority),
 
   getTasks: () =>
     ipcRenderer.invoke('backup:getTasks'),

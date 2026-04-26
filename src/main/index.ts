@@ -17,6 +17,8 @@ interface AppSettings {
   devices: string[]
   backupCount: number
   isUnlocked: boolean
+  defaultDuplicateStrategy?: 'skip' | 'suffix'
+  defaultGenerateThumbnails?: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -198,6 +200,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('backup:deleteTask', async (_, taskId: string) => {
     backupEngine.deleteTask(taskId)
+    persistTasks(backupEngine.getAllTasks())
+    return true
+  })
+
+  ipcMain.handle('backup:setPriority', async (_, taskId: string, priority: boolean) => {
+    backupEngine.setPriority(taskId, priority)
     persistTasks(backupEngine.getAllTasks())
     return true
   })

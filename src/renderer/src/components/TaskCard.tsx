@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2 } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2, Zap } from 'lucide-react'
 import type { BackupTask } from '../types'
 import { useTaskStore } from '../store/taskStore'
 import { useState } from 'react'
@@ -42,7 +42,7 @@ const STATUS_CONFIG = {
 interface Props { task: BackupTask }
 
 export function TaskCard({ task }: Props): JSX.Element {
-  const { deleteTask } = useTaskStore()
+  const { deleteTask, setPriority } = useTaskStore()
   const cfg = STATUS_CONFIG[task.status]
   const Icon = cfg.Icon
   const progress = task.totalBytes > 0 ? (task.transferredBytes / task.totalBytes) * 100 : 0
@@ -82,6 +82,12 @@ export function TaskCard({ task }: Props): JSX.Element {
             </span>
             <span className="text-gray-600 text-xs">·</span>
             <span className="text-gray-500 text-xs font-mono">{task.hashAlgorithm.toUpperCase()}</span>
+            {task.priority && (
+              <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                <Zap size={9} />
+                优先
+              </span>
+            )}
           </div>
           <h3 className="text-sm font-semibold text-gray-100 truncate">{task.name}</h3>
           <p className="text-xs text-gray-500 truncate mt-0.5">{task.sourcePath}</p>
@@ -89,6 +95,19 @@ export function TaskCard({ task }: Props): JSX.Element {
 
         {/* Action buttons */}
         <div className="flex items-center gap-1 ml-3 shrink-0">
+          {task.status === 'pending' && (
+            <button
+              onClick={() => setPriority(task.id, !task.priority)}
+              className={`p-1.5 rounded-lg transition-colors ${
+                task.priority
+                  ? 'text-amber-400 bg-amber-400/10 hover:bg-amber-400/20'
+                  : 'text-gray-500 hover:text-amber-400 hover:bg-amber-400/10'
+              }`}
+              title={task.priority ? '取消优先' : '设为优先执行'}
+            >
+              <Zap size={15} />
+            </button>
+          )}
           {isActive && (
             confirmCancel ? (
               <>
@@ -161,6 +180,11 @@ export function TaskCard({ task }: Props): JSX.Element {
           <CheckCircle2 size={14} className="text-green-400 shrink-0" />
           <span className="text-xs font-medium text-green-400">
             备份完成 — 全部 {task.totalFiles} 个文件已校验通过
+            {(task.skippedFiles ?? 0) > 0 && (
+              <span className="text-green-500/70 font-normal ml-1">
+                （跳过 {task.skippedFiles} 个系统隐藏文件，共 {formatBytes(task.skippedBytes ?? 0)}）
+              </span>
+            )}
           </span>
         </div>
       )}

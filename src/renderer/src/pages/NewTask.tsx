@@ -42,6 +42,10 @@ export function NewTask(): JSX.Element {
   const [selectedPosition, setSelectedPosition] = useState<string>('')
   const [volumePrefix, setVolumePrefix] = useState('Untitled')
   const [isStarting, setIsStarting] = useState(false)
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'suffix'>('skip')
+  const [generateThumbnails, setGenerateThumbnails] = useState(false)
+  const [taskPriority, setTaskPriority] = useState(false)
+  const [saveAsDefault, setSaveAsDefault] = useState(false)
 
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showAllProjects, setShowAllProjects] = useState(false)
@@ -56,7 +60,11 @@ export function NewTask(): JSX.Element {
   const [resolving, setResolving] = useState(false)
 
   useEffect(() => {
-    window.api.getSettings().then((s) => setDefaultHash(s.defaultHash))
+    window.api.getSettings().then((s) => {
+      setDefaultHash(s.defaultHash)
+      if (s.defaultDuplicateStrategy) setDuplicateStrategy(s.defaultDuplicateStrategy)
+      if (s.defaultGenerateThumbnails != null) setGenerateThumbnails(s.defaultGenerateThumbnails)
+    })
     loadProjects()
     loadDevices()
   }, [])
@@ -260,15 +268,22 @@ export function NewTask(): JSX.Element {
         return
       }
 
+      if (saveAsDefault) {
+        const currentSettings = await window.api.getSettings()
+        await window.api.saveSettings({
+          ...currentSettings,
+          defaultHash,
+          defaultDuplicateStrategy: duplicateStrategy,
+          defaultGenerateThumbnails: generateThumbnails
+        })
+      }
+
       const task = await window.api.createTask({
         name: '',
         sourcePath,
         devices: mode === 'project' ? [selectedDevice] : [],
         destinationPaths: destPaths,
         hashAlgorithm: defaultHash,
-        // card: just the source folder name — BackupEngine will append timestamp
-        // mirror: use source folder name too — BackupEngine will use as flat dest name
-        // project: just volumePrefix — BackupEngine will append timestamp (no pre-stamp)
         namingTemplate:
           mode === 'card'
             ? (sourcePath.split('/').pop() || 'Untitled')
@@ -277,7 +292,10 @@ export function NewTask(): JSX.Element {
               : (volumePrefix || 'Untitled'),
         shootingDate: mode === 'project' ? shootingDate : '',
         projectName: mode === 'project' ? (selectedProject?.name ?? '') : '',
-        copyMode: mode === 'mirror' ? 'mirror' : 'normal'
+        copyMode: mode === 'mirror' ? 'mirror' : 'normal',
+        duplicateStrategy,
+        generateThumbnails,
+        priority: taskPriority
       })
       addTask(task)
       const result = await window.api.startTask(task.id)
@@ -978,6 +996,113 @@ export function NewTask(): JSX.Element {
             {destSection}
           </>
         )}
+
+        {/* Advanced options */}
+        <div className="glass-card p-5 flex flex-col gap-4">
+          <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">高级选项</label>
+
+          {/* Hash algorithm */}
+          <div>
+            <p className="text-xs text-gray-500 mb-2">哈希算法</p>
+            <div className="flex gap-2">
+              {(['md5', 'sha1', 'sha256'] as const).map((algo) => (
+                <button
+                  key={algo}
+                  onClick={() => setDefaultHash(algo)}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
+                    defaultHash === algo
+                      ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                      : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
+                  }`}
+                >
+                  {algo.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Duplicate strategy */}
+          <div>
+            <p className="text-xs text-gray-500 mb-2">重复文件处理</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDuplicateStrategy('skip')}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                  duplicateStrategy === 'skip'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
+                }`}
+              >
+                跳过
+              </button>
+              <button
+                onClick={() => setDuplicateStrategy('suffix')}
+                className={`px-3 py-1.5 rounded-lg border text-xs transition-all ${
+                  duplicateStrategy === 'suffix'
+                    ? 'bg-blue-600/15 border-blue-500/40 text-blue-300'
+                    : 'bg-[#111] border-[#2a2a2a] text-gray-500 hover:border-[#3a3a3a]'
+                }`}
+              >
+                重命名（_copy_N）
+              </button>
+            </div>
+          </div>
+
+          {/* Toggles row */}
+          <div className="flex flex-col gap-3">
+            {/* Generate thumbnails */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300">视频首帧缩略图</p>
+                <p className="text-[11px] text-gray-600 mt-0.5">备份完成后提取 MXF / MOV / MP4 / R3D / BRAW 首帧</p>
+              </div>
+              <div
+                onClick={() => setGenerateThumbnails((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  generateThumbnails ? 'bg-blue-600' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  generateThumbnails ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
+
+            {/* Task priority */}
+            <label className="flex items-center justify-between cursor-pointer">
+              <div>
+                <p className="text-xs text-gray-300 flex items-center gap-1.5">
+                  <Zap size={11} className="text-amber-400" />
+                  优先执行
+                </p>
+                <p className="text-[11px] text-gray-600 mt-0.5">此任务将优先于其他等待中的任务执行</p>
+              </div>
+              <div
+                onClick={() => setTaskPriority((v) => !v)}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${
+                  taskPriority ? 'bg-amber-500' : 'bg-[#2a2a2a]'
+                }`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-all ${
+                  taskPriority ? 'left-4' : 'left-0.5'
+                }`} />
+              </div>
+            </label>
+
+            {/* Save as default */}
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div
+                onClick={() => setSaveAsDefault((v) => !v)}
+                className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                  saveAsDefault ? 'bg-blue-600 border-blue-500' : 'bg-[#111] border-[#3a3a3a]'
+                }`}
+              >
+                {saveAsDefault && <CheckCircle size={10} className="text-white" />}
+              </div>
+              <p className="text-xs text-gray-400">保存为默认设置（哈希算法 · 重复策略 · 缩略图）</p>
+            </label>
+          </div>
+        </div>
 
         {/* Start button */}
         <button

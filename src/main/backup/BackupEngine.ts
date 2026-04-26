@@ -2,6 +2,8 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import { EventEmitter } from 'events'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
 import type {
   BackupTask,
@@ -10,6 +12,8 @@ import type {
   ProgressPayload,
   TaskConfig
 } from '../types'
+
+const execAsync = promisify(exec)
 
 export class BackupEngine extends EventEmitter {
   private tasks: Map<string, BackupTask> = new Map()
@@ -64,7 +68,12 @@ export class BackupEngine extends EventEmitter {
       eta: 0,
       currentFile: '',
       verifyLog: [],
-      fileRecords: []
+      fileRecords: [],
+      skippedFiles: 0,
+      skippedBytes: 0,
+      priority: config.priority ?? false,
+      duplicateStrategy: config.duplicateStrategy ?? 'skip',
+      generateThumbnails: config.generateThumbnails ?? false
     }
     this.tasks.set(task.id, task)
     return task
@@ -188,6 +197,10 @@ export class BackupEngine extends EventEmitter {
       task.speedBps = 0
       task.eta = 0
       this.emitProgress(task)
+
+      if (task.generateThumbnails) {
+        await this.generateThumbnails(task).catch(() => {})
+      }
     } catch (err) {
       task.status = 'failed'
       task.errorMessage = (err as Error).message
@@ -252,6 +265,24 @@ export class BackupEngine extends EventEmitter {
 
         try {
           await fs.promises.mkdir(path.dirname(destFilePath), { recursive: true })
+
+          // Duplicate file handling strategy
+          const fileExists = await fs.promises.access(destFilePath).then(() => true).catch(() => false)
+          if (fileExists) {
+            if (task.duplicateStrategy === 'skip') {
+              return { path: destFilePath, checksum: '', verified: false }
+            } else {
+              const ext = path.extname(destFilePath)
+              const stem = destFilePath.slice(0, destFilePath.length - ext.length)
+              let n = 1
+              let candidate = `${stem}_copy_${n}${ext}`
+              while (await fs.promises.access(candidate).then(() => true).catch(() => false)) {
+                n++
+                candidate = `${stem}_copy_${n}${ext}`
+              }
+              destFilePath = candidate
+            }
+          }
 
           if (destIdx === 0) {
             // First destination: compute src hash during the copy stream (Bug 3 fix)
@@ -469,10 +500,16 @@ export class BackupEngine extends EventEmitter {
 
     for (const entry of entries) {
       if (entry.name.startsWith('.')) {
-        // #9 fix: log skipped hidden files
         if (task) {
-          task.verifyLog.push(`[跳过] ${path.relative(base, path.join(dirPath, entry.name))}`)
-          if (task.verifyLog.length > 100) task.verifyLog.shift()
+          if (entry.isFile()) {
+            const hiddenStat = await fs.promises.stat(path.join(dirPath, entry.name)).catch(() => null)
+            if (hiddenStat) {
+              task.skippedFiles = (task.skippedFiles ?? 0) + 1
+              task.skippedBytes = (task.skippedBytes ?? 0) + hiddenStat.size
+            }
+          } else {
+            task.skippedFiles = (task.skippedFiles ?? 0) + 1
+          }
         }
         continue
       }
@@ -523,8 +560,24 @@ export class BackupEngine extends EventEmitter {
       startedAt: task.startedAt,
       completedAt: task.completedAt,
       verifyCompletedFiles: task.verifyCompletedFiles,
-      verifyTotalFiles: task.verifyTotalFiles
+      verifyTotalFiles: task.verifyTotalFiles,
+      skippedFiles: task.skippedFiles,
+      skippedBytes: task.skippedBytes
     }
     this.emit('progress', payload)
+  }
+
+  private async generateThumbnails(task: BackupTask): Promise<void> {
+    const videoExts = new Set(['.mxf', '.mov', '.mp4', '.r3d', '.ari', '.braw'])
+    for (const record of task.fileRecords) {
+      const ext = path.extname(record.name).toLowerCase()
+      if (!videoExts.has(ext)) continue
+      for (const destEntry of record.destinations) {
+        if (!destEntry.verified || !destEntry.path) continue
+        const stem = destEntry.path.slice(0, destEntry.path.length - path.extname(destEntry.path).length)
+        const thumbPath = `${stem}_thumb.jpg`
+        await execAsync(`ffmpeg -y -i "${destEntry.path}" -vframes 1 -q:v 2 "${thumbPath}" 2>/dev/null`).catch(() => {})
+      }
+    }
   }
 }
