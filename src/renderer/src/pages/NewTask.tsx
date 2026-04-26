@@ -481,7 +481,17 @@ export function NewTask(): JSX.Element {
       {/* Mode toggle */}
       <div className="flex gap-1 p-1 bg-[#111] border border-[#2a2a2a] rounded-xl mb-4">
         <button
-          onClick={() => setMode('card')}
+          onClick={() => {
+            if (mode === 'card') return
+            setMode('card')
+            setSourcePath('')
+            setDestinations([])
+            autoDetectedRef.current = false
+            setSelectedProjectId('')
+            setSelectedDevice('')
+            setSelectedPosition('')
+            setResolvedPath(null)
+          }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'card'
               ? 'bg-blue-600 text-white shadow'
@@ -491,7 +501,17 @@ export function NewTask(): JSX.Element {
           备卡模式
         </button>
         <button
-          onClick={() => setMode('mirror')}
+          onClick={() => {
+            if (mode === 'mirror') return
+            setMode('mirror')
+            setSourcePath('')
+            setDestinations([])
+            autoDetectedRef.current = false
+            setSelectedProjectId('')
+            setSelectedDevice('')
+            setSelectedPosition('')
+            setResolvedPath(null)
+          }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'mirror'
               ? 'bg-purple-600 text-white shadow'
@@ -501,7 +521,17 @@ export function NewTask(): JSX.Element {
           镜像模式
         </button>
         <button
-          onClick={() => setMode('advanced')}
+          onClick={() => {
+            if (mode === 'advanced') return
+            setMode('advanced')
+            setSourcePath('')
+            setDestinations([])
+            autoDetectedRef.current = false
+            setSelectedProjectId('')
+            setSelectedDevice('')
+            setSelectedPosition('')
+            setResolvedPath(null)
+          }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
             mode === 'advanced'
               ? 'bg-blue-600 text-white shadow'

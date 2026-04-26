@@ -103,7 +103,7 @@ export class BackupEngine extends EventEmitter {
     const volumeName = task.namingTemplate
 
     try {
-      const files = await this.enumerateFiles(task.sourcePath, undefined, task)
+      const { files, emptyDirs } = await this.enumerateFiles(task.sourcePath, undefined, task)
       task.totalFiles = files.length
       task.totalBytes = files.reduce((sum, f) => sum + f.size, 0)
       this.emitProgress(task)
@@ -112,6 +112,10 @@ export class BackupEngine extends EventEmitter {
         // Mirror mode: dest is an exact A=B copy — no folder wrapping, preserve relative paths
         for (const dest of task.destinations) {
           await fs.promises.mkdir(dest.path, { recursive: true })
+          // Create empty directories in mirror mode
+          for (const emptyDir of emptyDirs) {
+            await fs.promises.mkdir(path.join(dest.path, emptyDir), { recursive: true })
+          }
           dest.resolvedPath = dest.path
         }
       } else {
@@ -125,6 +129,10 @@ export class BackupEngine extends EventEmitter {
           for (const device of deviceSubfolders) {
             const deviceRoot = this.resolveDeviceRoot(dest.path, projectFolder, hasProjectName, dateSubFolder, device, volumeName)
             await fs.promises.mkdir(deviceRoot, { recursive: true })
+            // Create empty directories under device root
+            for (const emptyDir of emptyDirs) {
+              await fs.promises.mkdir(path.join(deviceRoot, emptyDir), { recursive: true })
+            }
           }
           dest.resolvedPath = projectFolder ? path.join(dest.path, projectFolder) : dest.path
         }
@@ -220,50 +228,133 @@ export class BackupEngine extends EventEmitter {
     file: { name: string; relativePath: string; size: number; absolutePath: string },
     onProgress: (bytes: number) => void
   ): Promise<FileRecord> {
-    const srcChecksum = await this.hashFile(file.absolutePath, task.hashAlgorithm)
-
     const projectFolder = task.shootingDateFolder ?? ''
     const hasProjectName = projectFolder.length > 8
     const dateSubFolder = projectFolder.length >= 8 ? projectFolder.slice(0, 8) : ''
     const volumeName = task.namingTemplate
     const deviceSubfolders = task.devices.length > 0 ? task.devices : ['']
 
+    // Bug 1 fix: isolate per-destination errors so one failure doesn't cancel others
+    // Bug 3 fix: compute srcChecksum during the pipe stream of the first destination,
+    //            then reuse that checksum for remaining destinations (no pre-read pass)
+    let srcChecksum: string | null = null
+
     const destResults = await Promise.all(
-      task.destinations.map(async (dest) => {
+      task.destinations.map(async (dest, destIdx) => {
         let destFilePath: string
         if (task.copyMode === 'mirror') {
-          // Mirror mode: flat A=B copy directly into dest.path
           destFilePath = path.join(dest.path, file.relativePath)
         } else {
-          // #2 cleanup: with single-device enforcement in UI, deviceSubfolders always has 1 entry
           const device = deviceSubfolders[0]
           const deviceRoot = this.resolveDeviceRoot(dest.path, projectFolder, hasProjectName, dateSubFolder, device, volumeName)
           destFilePath = path.join(deviceRoot, file.relativePath)
         }
-        await fs.promises.mkdir(path.dirname(destFilePath), { recursive: true })
 
-        // #5 fix: pass cancel check into copyFile so large-file cancel is effective
-        await this.copyFile(file.absolutePath, destFilePath, (bytes) => {
-          dest.bytesWritten += bytes
-          onProgress(bytes / task.destinations.length)
-        }, task.id)
+        try {
+          await fs.promises.mkdir(path.dirname(destFilePath), { recursive: true })
 
-        const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
-        const verified = destChecksum === srcChecksum
-        if (!verified) {
-          dest.error = `校验失败: ${file.relativePath}`
+          if (destIdx === 0) {
+            // First destination: compute src hash during the copy stream (Bug 3 fix)
+            const { checksum: computedSrcChecksum } = await this.copyFileAndHash(
+              file.absolutePath,
+              destFilePath,
+              task.hashAlgorithm,
+              (bytes) => {
+                dest.bytesWritten += bytes
+                onProgress(bytes / task.destinations.length)
+              },
+              task.id
+            )
+            srcChecksum = computedSrcChecksum
+
+            // Verify destination
+            const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
+            const verified = destChecksum === srcChecksum
+            if (!verified) {
+              dest.error = `校验失败: ${file.relativePath}`
+            }
+            return { path: destFilePath, checksum: destChecksum, verified }
+          } else {
+            // Subsequent destinations: wait for srcChecksum from first dest
+            while (srcChecksum === null) {
+              await new Promise<void>((r) => setTimeout(r, 10))
+            }
+
+            await this.copyFile(
+              file.absolutePath,
+              destFilePath,
+              (bytes) => {
+                dest.bytesWritten += bytes
+                onProgress(bytes / task.destinations.length)
+              },
+              task.id
+            )
+
+            const destChecksum = await this.hashFile(destFilePath, task.hashAlgorithm)
+            const verified = destChecksum === srcChecksum
+            if (!verified) {
+              dest.error = `校验失败: ${file.relativePath}`
+            }
+            return { path: destFilePath, checksum: destChecksum, verified }
+          }
+        } catch (err) {
+          // Bug 1 fix: mark this destination as failed, don't propagate to Promise.all
+          const msg = (err as Error).message
+          dest.error = `拷贝失败: ${file.relativePath} — ${msg}`
+          dest.verified = false
+          return { path: destFilePath, checksum: '', verified: false, error: msg }
         }
-        return { path: destFilePath, checksum: destChecksum, verified }
       })
     )
+
+    // srcChecksum may still be null if the first destination failed entirely
+    const finalSrcChecksum = srcChecksum ?? ''
 
     return {
       name: file.name,
       relativePath: file.relativePath,
       size: file.size,
-      srcChecksum,
+      srcChecksum: finalSrcChecksum,
       destinations: destResults
     }
+  }
+
+  // Bug 3 fix: computes src hash during copy stream — one read pass instead of two
+  private copyFileAndHash(
+    src: string,
+    dest: string,
+    algorithm: HashAlgorithm,
+    onProgress: (bytes: number) => void,
+    taskId?: string
+  ): Promise<{ checksum: string }> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash(algorithm)
+      const readStream = fs.createReadStream(src, { highWaterMark: 2 * 1024 * 1024 })
+      const writeStream = fs.createWriteStream(dest)
+
+      readStream.on('data', (chunk: Buffer | string) => {
+        if (taskId && this.cancelFlags.get(taskId)) {
+          readStream.destroy()
+          writeStream.destroy()
+          return
+        }
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        hash.update(buf)
+        onProgress(buf.length)
+      })
+
+      readStream.on('error', (err) => {
+        writeStream.destroy()
+        reject(err)
+      })
+      writeStream.on('error', reject)
+      writeStream.on('finish', () => resolve({ checksum: hash.digest('hex') }))
+      readStream.on('close', () => {
+        if (taskId && this.cancelFlags.get(taskId)) resolve({ checksum: hash.digest('hex') })
+      })
+
+      readStream.pipe(writeStream)
+    })
   }
 
   // #5 fix: accepts taskId to check cancel flag and destroy streams on cancel
@@ -355,19 +446,26 @@ export class BackupEngine extends EventEmitter {
     }
   }
 
+  // Bug 4 fix: also returns empty directories so they can be created at destinations
   private async enumerateFiles(
     dirPath: string,
     baseDir?: string,
     task?: BackupTask
-  ): Promise<Array<{ name: string; relativePath: string; size: number; absolutePath: string }>> {
+  ): Promise<{
+    files: Array<{ name: string; relativePath: string; size: number; absolutePath: string }>
+    emptyDirs: string[]
+  }> {
     const base = baseDir ?? dirPath
     const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
-    const results: Array<{
+    const files: Array<{
       name: string
       relativePath: string
       size: number
       absolutePath: string
     }> = []
+    const emptyDirs: string[] = []
+
+    let hasNonHiddenContent = false
 
     for (const entry of entries) {
       if (entry.name.startsWith('.')) {
@@ -378,13 +476,19 @@ export class BackupEngine extends EventEmitter {
         }
         continue
       }
+      hasNonHiddenContent = true
       const fullPath = path.join(dirPath, entry.name)
       if (entry.isDirectory()) {
         const nested = await this.enumerateFiles(fullPath, base, task)
-        results.push(...nested)
+        files.push(...nested.files)
+        emptyDirs.push(...nested.emptyDirs)
+        // If nested returned no files and no emptyDirs of its own, this sub-dir is empty
+        if (nested.files.length === 0 && nested.emptyDirs.length === 0) {
+          emptyDirs.push(path.relative(base, fullPath))
+        }
       } else if (entry.isFile()) {
         const stat = await fs.promises.stat(fullPath)
-        results.push({
+        files.push({
           name: entry.name,
           relativePath: path.relative(base, fullPath),
           size: stat.size,
@@ -392,7 +496,14 @@ export class BackupEngine extends EventEmitter {
         })
       }
     }
-    return results
+
+    // If the directory itself is empty (or only had hidden entries), record it
+    // but only if it's not the root (baseDir is set, meaning we're in a subdirectory)
+    if (!hasNonHiddenContent && baseDir !== undefined) {
+      emptyDirs.push(path.relative(base, dirPath))
+    }
+
+    return { files, emptyDirs }
   }
 
   private emitProgress(task: BackupTask): void {
