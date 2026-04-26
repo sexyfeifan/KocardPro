@@ -15,12 +15,16 @@ interface AppSettings {
   defaultHash: 'md5' | 'sha1' | 'sha256'
   verifyAfterCopy: boolean
   devices: string[]
+  backupCount: number
+  isUnlocked: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   defaultHash: 'md5',
   verifyAfterCopy: true,
-  devices: ['A机', 'B机', 'C机', 'DIT']
+  devices: ['A机', 'B机', 'C机', 'DIT'],
+  backupCount: 0,
+  isUnlocked: false
 }
 
 function getSettingsPath(): string {
@@ -168,8 +172,17 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('backup:startTask', async (_, taskId: string) => {
+    const s = loadSettings()
+    const FREE_LIMIT = 10
+    if (!s.isUnlocked && (s.backupCount ?? 0) >= FREE_LIMIT) {
+      return { allowed: false, remaining: 0 }
+    }
+    if (!s.isUnlocked) {
+      s.backupCount = (s.backupCount ?? 0) + 1
+      saveSettings(s)
+    }
     backupEngine.startTask(taskId).catch(console.error)
-    return true
+    return { allowed: true, remaining: s.isUnlocked ? Infinity : FREE_LIMIT - s.backupCount }
   })
 
   ipcMain.handle('backup:cancelTask', async (_, taskId: string) => {
@@ -492,5 +505,22 @@ function registerIpcHandlers(): void {
       ? join(dest, projectNameCompact, dateStr, deviceName, positionLabel)
       : join(dest, projectNameCompact, dateStr, deviceName)
     return deviceFolder
+  })
+
+  ipcMain.handle('settings:checkAndIncrementBackupCount', async () => {
+    const s = loadSettings()
+    if (s.isUnlocked) return { allowed: true, remaining: Infinity }
+    const FREE_LIMIT = 10
+    if (s.backupCount >= FREE_LIMIT) return { allowed: false, remaining: 0 }
+    s.backupCount = (s.backupCount ?? 0) + 1
+    saveSettings(s)
+    return { allowed: true, remaining: FREE_LIMIT - s.backupCount }
+  })
+
+  ipcMain.handle('settings:unlock', async () => {
+    const s = loadSettings()
+    s.isUnlocked = true
+    saveSettings(s)
+    return true
   })
 }

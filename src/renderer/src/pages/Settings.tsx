@@ -8,21 +8,43 @@ const HASH_OPTIONS: { value: HashAlgorithm; label: string; desc: string }[] = [
   { value: 'sha256', label: 'SHA256', desc: '最安全，推荐' }
 ]
 
+const FREE_LIMIT = 10
+
 export function Settings(): JSX.Element {
   const [defaultHash, setDefaultHash] = useState<HashAlgorithm>('md5')
   const [verifyAfterCopy, setVerifyAfterCopy] = useState(true)
   const [saved, setSaved] = useState(false)
   const [appVersion, setAppVersion] = useState('')
+  const [backupCount, setBackupCount] = useState(0)
+  const [isUnlocked, setIsUnlocked] = useState(false)
+  const [showUnlockModal, setShowUnlockModal] = useState(false)
   const loaded = useRef(false)
+  const tapCount = useRef(0)
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
       setDefaultHash(s.defaultHash)
       setVerifyAfterCopy(s.verifyAfterCopy)
+      setBackupCount(s.backupCount ?? 0)
+      setIsUnlocked(s.isUnlocked ?? false)
       loaded.current = true
     })
     window.api.getAppVersion().then((v) => setAppVersion(v))
   }, [])
+
+  const handleAuthorTap = async () => {
+    if (isUnlocked) return
+    tapCount.current += 1
+    if (tapTimer.current) clearTimeout(tapTimer.current)
+    tapTimer.current = setTimeout(() => { tapCount.current = 0 }, 2000)
+    if (tapCount.current >= 5) {
+      tapCount.current = 0
+      await window.api.unlock()
+      setIsUnlocked(true)
+      setShowUnlockModal(true)
+    }
+  }
 
   const persist = async (hash: HashAlgorithm, verify: boolean) => {
     if (!loaded.current) return
@@ -45,6 +67,21 @@ export function Settings(): JSX.Element {
 
   return (
     <div className="flex-1 overflow-y-auto p-6 max-w-2xl mx-auto w-full">
+      {showUnlockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="glass-card p-8 max-w-sm w-full mx-4 text-center">
+            <div className="text-2xl mb-3">🎉</div>
+            <p className="text-gray-100 font-semibold text-base mb-1">已解锁无限备份</p>
+            <p className="text-gray-400 text-sm mb-5">感谢支持，现在可以无限使用所有功能。</p>
+            <button
+              onClick={() => setShowUnlockModal(false)}
+              className="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              好的
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-col gap-5">
 
         {/* Default hash */}
@@ -122,11 +159,25 @@ export function Settings(): JSX.Element {
             </div>
             <div className="border-t border-[#1e1e1e] pt-2 mt-2 flex justify-between text-sm">
               <span className="text-gray-500">作者</span>
-              <span className="text-gray-400 text-xs">@我是性感的非凡</span>
+              <span
+                className="text-gray-400 text-xs select-none cursor-default"
+                onClick={handleAuthorTap}
+              >@我是性感的非凡</span>
             </div>
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">联系</span>
               <span className="text-gray-400 text-xs font-mono">zhoufeifan@gmail.com</span>
+            </div>
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-gray-500">备份次数</span>
+              {isUnlocked ? (
+                <span className="text-green-400 text-xs font-mono">已解锁 · 无限使用</span>
+              ) : (
+                <span className={`text-xs font-mono ${backupCount >= FREE_LIMIT ? 'text-red-400' : backupCount >= FREE_LIMIT - 3 ? 'text-yellow-400' : 'text-gray-400'}`}>
+                  {backupCount} / {FREE_LIMIT}
+                  {backupCount >= FREE_LIMIT && '  · 已达上限'}
+                </span>
+              )}
             </div>
           </div>
         </div>

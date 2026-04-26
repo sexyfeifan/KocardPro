@@ -81,6 +81,8 @@ export interface AppSettings {
   defaultHash: HashAlgorithm
   verifyAfterCopy: boolean
   devices: string[]
+  backupCount: number
+  isUnlocked: boolean
 }
 
 export interface ProjectConfig {
@@ -113,7 +115,7 @@ declare global {
       selectDirectory: (defaultPath?: string) => Promise<string | null>
       saveReport: (taskName: string) => Promise<string | null>
       createTask: (config: TaskConfig) => Promise<BackupTask>
-      startTask: (taskId: string) => Promise<boolean>
+      startTask: (taskId: string) => Promise<{ allowed: boolean; remaining: number }>
       cancelTask: (taskId: string) => Promise<boolean>
       deleteTask: (taskId: string) => Promise<boolean>
       getTasks: () => Promise<BackupTask[]>
@@ -137,6 +139,8 @@ declare global {
       createFileStructure: (projectId: string) => Promise<{ created: string[]; skipped: string[]; errors: string[] }>
       resolveBackupPath: (params: { projectId: string; shootingDate: string; deviceName: string; positionLabel: string }) => Promise<string | null>
       getAppVersion: () => Promise<string>
+      checkAndIncrementBackupCount: () => Promise<{ allowed: boolean; remaining: number }>
+      unlock: () => Promise<boolean>
     }
   }
 }

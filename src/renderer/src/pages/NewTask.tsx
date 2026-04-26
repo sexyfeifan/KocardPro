@@ -28,7 +28,7 @@ interface DestRow {
   driveInfo: DriveInfo | null
 }
 
-type Mode = 'card' | 'mirror' | 'advanced'
+type Mode = 'card' | 'mirror' | 'project'
 
 export function NewTask(): JSX.Element {
   const { addTask, setActivePage, projects, projectsError, devices, loadProjects, loadDevices } = useTaskStore()
@@ -61,9 +61,9 @@ export function NewTask(): JSX.Element {
     loadDevices()
   }, [])
 
-  // Reload projects when switching to advanced mode
+  // Reload projects when switching to project mode
   useEffect(() => {
-    if (mode === 'advanced') loadProjects()
+    if (mode === 'project') loadProjects()
   }, [mode])
 
   // Scan for source volumes in all modes — poll every 5s
@@ -78,9 +78,9 @@ export function NewTask(): JSX.Element {
     return () => clearInterval(id)
   }, [scanSources])
 
-  // In advanced mode, reset detectedSources on mode exit (keep for card/mirror too now)
+  // In project mode, reset detectedSources on mode exit (keep for card/mirror too now)
   useEffect(() => {
-    if (mode !== 'advanced') return
+    if (mode !== 'project') return
   }, [mode])
 
   // Auto-fill source when exactly 1 source detected and none selected yet
@@ -114,7 +114,7 @@ export function NewTask(): JSX.Element {
 
   // Auto-resolve path when project + date + device + position are all set
   useEffect(() => {
-    if (mode !== 'advanced') return
+    if (mode !== 'project') return
     if (!selectedProjectId || !shootingDate || !selectedDevice || !selectedPosition) {
       setResolvedPath(null)
       return
@@ -140,6 +140,17 @@ export function NewTask(): JSX.Element {
     return () => { cancelled = true }
   }, [mode, selectedProjectId, shootingDate, selectedDevice, selectedPosition])
 
+  const isNew = (createdAt?: number) =>
+    createdAt != null && Date.now() - createdAt < 7 * 24 * 3600 * 1000
+
+  // applyProject only sets the date — selectedProjectId is set by the button onClick
+  const applyProject = (projectId: string) => {
+    const p = projects.find((pr) => pr.id === projectId)
+    if (!p) return
+    const dateToSet = p.shootingDateStart ?? p.shootingDate ?? todayLocal()
+    setShootingDate(dateToSet)
+  }
+
   // Reset position when device or project changes
   useEffect(() => {
     setSelectedPosition('')
@@ -150,29 +161,25 @@ export function NewTask(): JSX.Element {
     setSelectedDevice('')
   }, [selectedProjectId])
 
-  const isNew = (createdAt?: number) =>
-    createdAt != null && Date.now() - createdAt < 7 * 24 * 3600 * 1000
-
-  const applyProject = async (projectId: string) => {
-    const p = activeProjects.find((pr) => pr.id === projectId)
-    if (!p) return
-    setSelectedProjectId(p.id)
-    // Set date to start of project plan (or today if not set)
-    const dateToSet = p.shootingDateStart ?? p.shootingDate ?? todayLocal()
-    setShootingDate(dateToSet)
-    // Auto-populate manually-added destinations from project destinationPaths
-    if (p.destinationPaths && p.destinationPaths.length > 0) {
-      const rows = await Promise.all(
-        p.destinationPaths.map(async (path) => {
-          const info = await window.api.getDriveInfo(path)
-          return { id: Math.random().toString(36).slice(2), path, driveInfo: info }
-        })
-      )
-      setDestinations(rows)
-    } else {
+  // Fill destinations when a project is selected — single execution path, no race condition
+  useEffect(() => {
+    if (mode !== 'project' || !selectedProjectId) return
+    const p = projects.find((pr) => pr.id === selectedProjectId)
+    if (!p?.destinationPaths?.length) {
       setDestinations([])
+      return
     }
-  }
+    let cancelled = false
+    Promise.all(
+      p.destinationPaths.map(async (path) => {
+        const info = await window.api.getDriveInfo(path)
+        return { id: Math.random().toString(36).slice(2), path, driveInfo: info }
+      })
+    ).then((rows) => {
+      if (!cancelled) setDestinations(rows)
+    })
+    return () => { cancelled = true }
+  }, [selectedProjectId, mode])
 
   const selectSource = async () => {
     const p = await window.api.selectDirectory()
@@ -198,9 +205,9 @@ export function NewTask(): JSX.Element {
   const removeDestination = (id: string) =>
     setDestinations((prev) => prev.filter((d) => d.id !== id))
 
-  // Real-time path preview for manually-added destinations (advanced mode only)
+  // Real-time path preview for manually-added destinations (project mode only)
   const pathPreviews = useMemo(() => {
-    if (mode !== 'advanced') return []
+    if (mode !== 'project') return []
     const dateCompact = dateToCompact(shootingDate)
     const projectName = selectedProject?.name ?? ''
     const topFolder = projectName ? `${dateCompact}${projectName}` : dateCompact
@@ -222,7 +229,7 @@ export function NewTask(): JSX.Element {
 
   const canStartCard = sourcePath && destinations.length > 0
   const canStartMirror = sourcePath && destinations.length > 0
-  // Advanced: can start if source set and either a resolved project path or at least 1 manual destination
+  // Project: can start if source set and either a resolved project path or at least 1 manual destination
   const canStartAdvanced =
     sourcePath &&
     selectedDevice !== '' &&
@@ -238,32 +245,37 @@ export function NewTask(): JSX.Element {
     setIsStarting(true)
     try {
       const destPaths =
-        mode === 'advanced' && resolvedPath
+        mode === 'project' && resolvedPath
           ? [resolvedPath, ...destinations.map((d) => d.path)]
           : destinations.map((d) => d.path)
 
       const task = await window.api.createTask({
         name: '',
         sourcePath,
-        // card/mirror: no device folder; advanced: device folder
-        devices: mode === 'advanced' ? [selectedDevice] : [],
+        // card/mirror: no device folder; project: device folder
+        devices: mode === 'project' ? [selectedDevice] : [],
         destinationPaths: destPaths,
         hashAlgorithm: defaultHash,
         // card: just the source folder name — BackupEngine will append timestamp
         // mirror: use source folder name too — BackupEngine will use as flat dest name
-        // advanced: just volumePrefix — BackupEngine will append timestamp (no pre-stamp)
+        // project: just volumePrefix — BackupEngine will append timestamp (no pre-stamp)
         namingTemplate:
           mode === 'card'
             ? (sourcePath.split('/').pop() || 'Untitled')
             : mode === 'mirror'
               ? (sourcePath.split('/').pop() || 'Untitled')
               : (volumePrefix || 'Untitled'),
-        shootingDate: mode === 'advanced' ? shootingDate : '',
-        projectName: mode === 'advanced' ? (selectedProject?.name ?? '') : '',
+        shootingDate: mode === 'project' ? shootingDate : '',
+        projectName: mode === 'project' ? (selectedProject?.name ?? '') : '',
         copyMode: mode === 'mirror' ? 'mirror' : 'normal'
       })
       addTask(task)
-      await window.api.startTask(task.id)
+      const result = await window.api.startTask(task.id)
+      if (result && result.allowed === false) {
+        alert('已达到免费备份上限（10次）。请前往设置页面解锁无限使用。')
+        setIsStarting(false)
+        return
+      }
       setActivePage('dashboard')
     } finally {
       setIsStarting(false)
@@ -464,7 +476,7 @@ export function NewTask(): JSX.Element {
                 <Trash2 size={14} />
               </button>
             </div>
-            {mode === 'advanced' && pathPreviews[idx] && (
+            {mode === 'project' && pathPreviews[idx] && (
               <div className="mt-2 pt-2 border-t border-[#1e1e1e]">
                 <p className="text-xs text-gray-600 mb-0.5">预计路径</p>
                 <p className="text-xs text-blue-400/70 font-mono break-all">{pathPreviews[idx]}</p>
@@ -497,7 +509,7 @@ export function NewTask(): JSX.Element {
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#1e1e1e]">
               <div className="flex items-center gap-2">
                 <HelpCircle size={16} className="text-blue-400" />
-                <span className="text-sm font-semibold text-gray-200">高级模式使用指南</span>
+                <span className="text-sm font-semibold text-gray-200">项目模式使用指南</span>
               </div>
               <button onClick={() => setShowHelp(false)} className="p-1.5 text-gray-600 hover:text-gray-300 transition-colors">
                 <X size={15} />
@@ -593,8 +605,8 @@ export function NewTask(): JSX.Element {
         </button>
         <button
           onClick={() => {
-            if (mode === 'advanced') return
-            setMode('advanced')
+            if (mode === 'project') return
+            setMode('project')
             setSourcePath('')
             setDestinations([])
             autoDetectedRef.current = false
@@ -605,14 +617,14 @@ export function NewTask(): JSX.Element {
             setSourceTab('card')
           }}
           className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-            mode === 'advanced'
+            mode === 'project'
               ? 'bg-blue-600 text-white shadow'
               : 'text-gray-500 hover:text-gray-300'
           }`}
         >
-          高级模式
+          项目模式
         </button>
-        {mode === 'advanced' && (
+        {mode === 'project' && (
           <button
             onClick={() => setShowHelp(true)}
             className="px-3 py-2 rounded-lg text-gray-600 hover:text-blue-400 transition-colors"
@@ -662,10 +674,10 @@ export function NewTask(): JSX.Element {
           </div>
         </div>
       )}
-      {mode === 'advanced' && (
+      {mode === 'project' && (
         <div className="mb-5 px-4 py-3.5 bg-blue-600/8 border border-blue-500/20 rounded-xl flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">高级模式 · Advanced Mode</span>
+            <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">项目模式 · Project Mode</span>
           </div>
           <p className="text-xs text-gray-400 leading-relaxed">
             关联已创建的项目，自动识别素材卡、自动填充目的地路径，按「项目 / 日期 / 机位 / 卷名_时间戳」层级归档。适合多机位、多日拍摄的系统化管理工作流。
@@ -726,6 +738,13 @@ export function NewTask(): JSX.Element {
                         : (selectedProject.shootingDate ?? '')
                       return dr ? <p className="text-xs text-blue-400/60 mt-0.5">{dr}</p> : null
                     })()}
+                    {selectedProject.destinationPaths?.length ? (
+                      <div className="mt-1.5 flex flex-col gap-0.5">
+                        {selectedProject.destinationPaths.map((dp) => (
+                          <p key={dp} className="text-[10px] text-blue-400/40 font-mono truncate">{dp}</p>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                   <button
                     onClick={() => { setSelectedProjectId(''); setDestinations([]) }}
@@ -761,7 +780,10 @@ export function NewTask(): JSX.Element {
                     return (
                       <button
                         key={p.id}
-                        onClick={() => active ? (setSelectedProjectId(''), setDestinations([])) : applyProject(p.id)}
+                        onClick={() => {
+                          if (active) { setSelectedProjectId(''); setDestinations([]) }
+                          else { setSelectedProjectId(p.id); applyProject(p.id) }
+                        }}
                         className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-all ${
                           active
                             ? 'bg-blue-600/10 border-blue-500/30 text-blue-300'

@@ -5,6 +5,8 @@ interface AppSettings {
   defaultHash: 'md5' | 'sha1' | 'sha256'
   verifyAfterCopy: boolean
   devices: string[]
+  backupCount: number
+  isUnlocked: boolean
 }
 
 contextBridge.exposeInMainWorld('api', {
@@ -85,6 +87,12 @@ contextBridge.exposeInMainWorld('api', {
 
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke('app:getVersion'),
+
+  checkAndIncrementBackupCount: (): Promise<{ allowed: boolean; remaining: number }> =>
+    ipcRenderer.invoke('settings:checkAndIncrementBackupCount'),
+
+  unlock: (): Promise<boolean> =>
+    ipcRenderer.invoke('settings:unlock'),
 
   onProgress: (callback: (payload: ProgressPayload) => void) => {
     const handler = (_: Electron.IpcRendererEvent, payload: ProgressPayload) => callback(payload)
