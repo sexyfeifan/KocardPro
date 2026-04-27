@@ -39,8 +39,8 @@ contextBridge.exposeInMainWorld('api', {
   getTask: (taskId: string) =>
     ipcRenderer.invoke('backup:getTask', taskId),
 
-  generateReport: (taskId: string, savePath: string) =>
-    ipcRenderer.invoke('backup:generateReport', taskId, savePath),
+  generateReport: (taskId: string, savePath: string, options?: { includeThumbnails?: boolean }) =>
+    ipcRenderer.invoke('backup:generateReport', taskId, savePath, options),
 
   getDriveInfo: (dirPath: string) =>
     ipcRenderer.invoke('system:getDriveInfo', dirPath),

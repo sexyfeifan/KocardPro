@@ -240,9 +240,12 @@ export function NewTask(): JSX.Element {
   const canStartCard = sourcePath && destinations.length > 0
   const canStartMirror = sourcePath && destinations.length > 0
   // Project: can start if source set and either a resolved project path or at least 1 manual destination
+  // If the selected device has sub-positions defined, a position must also be chosen
+  const positionRequired = availablePositions.length > 0 && selectedPosition === ''
   const canStartAdvanced =
     sourcePath &&
     selectedDevice !== '' &&
+    !positionRequired &&
     (resolvedPath !== null || destinations.length > 0)
 
   const canStart =
@@ -952,6 +955,9 @@ export function NewTask(): JSX.Element {
                     )
                   })}
                 </div>
+                {selectedPosition === '' && (
+                  <p className="text-xs text-amber-500/70 mt-2">请选择一个子位置</p>
+                )}
               </div>
             )}
 
@@ -1124,9 +1130,11 @@ export function NewTask(): JSX.Element {
           <p className="text-center text-xs text-gray-600">
           {mode === 'card' || mode === 'mirror'
               ? '请选择素材源和至少一个目的地'
-              : resolvedPath === null
-                ? '请选择素材源、机位，或添加手动目的地'
-                : '请选择素材源和机位'}
+              : positionRequired
+                ? '请选择机位子位置'
+                : resolvedPath === null
+                  ? '请选择素材源、机位，或添加手动目的地'
+                  : '请选择素材源和机位'}
           </p>
         )}
       </div>

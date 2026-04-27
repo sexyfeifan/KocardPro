@@ -1,4 +1,4 @@
-import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2, Zap } from 'lucide-react'
+import { CheckCircle2, XCircle, Clock, Loader2, FileDown, StopCircle, Trash2, Zap, HardDrive, AlertTriangle } from 'lucide-react'
 import type { BackupTask } from '../types'
 import { useTaskStore } from '../store/taskStore'
 import { useState } from 'react'
@@ -51,6 +51,8 @@ export function TaskCard({ task }: Props): JSX.Element {
 
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [showExportOptions, setShowExportOptions] = useState(false)
+  const [includeThumbnails, setIncludeThumbnails] = useState(false)
 
   const verifyTotal = task.verifyTotalFiles ?? 0
   const verifyDone = task.verifyCompletedFiles ?? 0
@@ -59,9 +61,14 @@ export function TaskCard({ task }: Props): JSX.Element {
   const handleCancel = () => window.api.cancelTask(task.id)
 
   const handleExport = async () => {
+    if (task.generateThumbnails && task.status === 'completed' && !showExportOptions) {
+      setShowExportOptions(true)
+      return
+    }
     const savePath = await window.api.saveReport(task.name)
     if (savePath) {
-      await window.api.generateReport(task.id, savePath)
+      await window.api.generateReport(task.id, savePath, { includeThumbnails })
+      setShowExportOptions(false)
       window.api.revealInFinder(savePath)
     }
   }
@@ -90,7 +97,22 @@ export function TaskCard({ task }: Props): JSX.Element {
             )}
           </div>
           <h3 className="text-sm font-semibold text-gray-100 truncate">{task.name}</h3>
-          <p className="text-xs text-gray-500 truncate mt-0.5">{task.sourcePath}</p>
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/15 text-amber-400 border border-amber-500/25 shrink-0">
+              <HardDrive size={9} />
+              数据来源
+            </span>
+            <p className="text-xs text-gray-500 truncate">{task.sourcePath}</p>
+          </div>
+          {task.destinations.map((dest) => (
+            <div key={dest.id} className="flex items-center gap-1.5 mt-1">
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/15 text-blue-400 border border-blue-500/25 shrink-0">
+                <HardDrive size={9} />
+                备份路径
+              </span>
+              <p className="text-xs text-gray-500 truncate">{dest.path}</p>
+            </div>
+          ))}
         </div>
 
         {/* Action buttons */}
@@ -174,6 +196,42 @@ export function TaskCard({ task }: Props): JSX.Element {
         </div>
       </div>
 
+      {/* Thumbnail export options panel */}
+      {showExportOptions && (
+        <div className="mb-3 px-3 py-2.5 bg-blue-500/10 border border-blue-500/25 rounded-lg flex items-center justify-between gap-3">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={includeThumbnails}
+              onChange={(e) => setIncludeThumbnails(e.target.checked)}
+              className="rounded accent-blue-500"
+            />
+            <span className="text-xs text-blue-300">在报告中包含首帧缩略图</span>
+          </label>
+          <div className="flex gap-1.5 shrink-0">
+            <button
+              onClick={async () => {
+                const savePath = await window.api.saveReport(task.name)
+                if (savePath) {
+                  await window.api.generateReport(task.id, savePath, { includeThumbnails })
+                  setShowExportOptions(false)
+                  window.api.revealInFinder(savePath)
+                }
+              }}
+              className="px-2.5 py-1 rounded-lg text-xs text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 transition-colors"
+            >
+              导出
+            </button>
+            <button
+              onClick={() => setShowExportOptions(false)}
+              className="px-2.5 py-1 rounded-lg text-xs text-gray-500 hover:bg-white/5 transition-colors"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Completion banner */}
       {task.status === 'completed' && (
         <div className="mb-3 px-3 py-2.5 bg-green-500/10 border border-green-500/25 rounded-lg flex items-center gap-2">
@@ -186,6 +244,17 @@ export function TaskCard({ task }: Props): JSX.Element {
               </span>
             )}
           </span>
+        </div>
+      )}
+
+      {/* Thumbnail generation error */}
+      {task.status === 'completed' && task.generateThumbnails && task.thumbnailError && (
+        <div className="mb-3 px-3 py-2.5 bg-amber-500/10 border border-amber-500/25 rounded-lg flex items-start gap-2">
+          <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-medium text-amber-400 mb-0.5">缩略图生成失败</p>
+            <p className="text-xs text-amber-400/70">{task.thumbnailError}</p>
+          </div>
         </div>
       )}
       {task.status === 'failed' && (

@@ -24,6 +24,7 @@ export interface FileRecord {
     checksum: string
     verified: boolean
   }>
+  thumbnailPath?: string
 }
 
 export interface BackupTask {
@@ -56,6 +57,7 @@ export interface BackupTask {
   priority?: boolean
   duplicateStrategy?: DuplicateStrategy
   generateThumbnails?: boolean
+  thumbnailError?: string
 }
 
 export interface TaskConfig {

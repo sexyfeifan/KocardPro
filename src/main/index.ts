@@ -218,10 +218,10 @@ function registerIpcHandlers(): void {
     return backupEngine.getTask(taskId)
   })
 
-  ipcMain.handle('backup:generateReport', async (_, taskId: string, savePath: string) => {
+  ipcMain.handle('backup:generateReport', async (_, taskId: string, savePath: string, options?: { includeThumbnails?: boolean }) => {
     const task = backupEngine.getTask(taskId)
     if (!task) throw new Error('Task not found')
-    const htmlBuffer = generateReport(task)
+    const htmlBuffer = await generateReport(task, options ?? {})
     const tmpPath = join(app.getPath('temp'), `report_${taskId}.html`)
     await fs.promises.writeFile(tmpPath, htmlBuffer)
     const win = new BrowserWindow({ show: false, webPreferences: { sandbox: false } })

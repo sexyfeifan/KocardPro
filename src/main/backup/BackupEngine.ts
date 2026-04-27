@@ -5,6 +5,7 @@ import { EventEmitter } from 'events'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { v4 as uuidv4 } from 'uuid'
+import _ffmpegPath from 'ffmpeg-static'
 import type {
   BackupTask,
   FileRecord,
@@ -14,6 +15,12 @@ import type {
 } from '../types'
 
 const execAsync = promisify(exec)
+
+// In packaged app, ffmpeg-static resolves inside app.asar (not executable).
+// asarUnpack extracts it to app.asar.unpacked, so we remap the path.
+const ffmpegPath = _ffmpegPath
+  ? _ffmpegPath.replace('app.asar', 'app.asar.unpacked')
+  : null
 
 export class BackupEngine extends EventEmitter {
   private tasks: Map<string, BackupTask> = new Map()
@@ -199,7 +206,8 @@ export class BackupEngine extends EventEmitter {
       this.emitProgress(task)
 
       if (task.generateThumbnails) {
-        await this.generateThumbnails(task).catch(() => {})
+        await this.generateThumbnails(task)
+        this.emitProgress(task)
       }
     } catch (err) {
       task.status = 'failed'
@@ -568,7 +576,31 @@ export class BackupEngine extends EventEmitter {
   }
 
   private async generateThumbnails(task: BackupTask): Promise<void> {
+    if (!ffmpegPath) {
+      task.thumbnailError = 'ffmpeg 未找到，无法生成缩略图。请联系开发者或重新安装应用。'
+      return
+    }
+
+    // Verify the binary is actually executable before processing all files
+    const ffmpegWorks = await execAsync(`"${ffmpegPath}" -version`)
+      .then(() => true)
+      .catch((err: NodeJS.ErrnoException) => {
+        if (err.code === 'EACCES') {
+          task.thumbnailError = 'ffmpeg 没有执行权限。请前往「系统偏好设置 → 安全性与隐私」允许运行，或重新安装应用。'
+        } else if (err.code === 'ENOENT') {
+          task.thumbnailError = '找不到 ffmpeg，请重新安装 KocardPro。'
+        } else {
+          task.thumbnailError = `ffmpeg 无法运行（${err.message ?? err.code}），请重新安装应用。`
+        }
+        return false
+      })
+
+    if (!ffmpegWorks) return
+
     const videoExts = new Set(['.mxf', '.mov', '.mp4', '.r3d', '.ari', '.braw'])
+    let generated = 0
+    let failed = 0
+
     for (const record of task.fileRecords) {
       const ext = path.extname(record.name).toLowerCase()
       if (!videoExts.has(ext)) continue
@@ -576,8 +608,20 @@ export class BackupEngine extends EventEmitter {
         if (!destEntry.verified || !destEntry.path) continue
         const stem = destEntry.path.slice(0, destEntry.path.length - path.extname(destEntry.path).length)
         const thumbPath = `${stem}_thumb.jpg`
-        await execAsync(`ffmpeg -y -i "${destEntry.path}" -vframes 1 -q:v 2 "${thumbPath}" 2>/dev/null`).catch(() => {})
+        const ok = await execAsync(`"${ffmpegPath}" -y -i "${destEntry.path}" -vframes 1 -q:v 2 "${thumbPath}" 2>/dev/null`)
+          .then(() => true).catch(() => false)
+        if (ok && !record.thumbnailPath) {
+          record.thumbnailPath = thumbPath
+          generated++
+        } else if (!ok) {
+          failed++
+        }
+        break
       }
+    }
+
+    if (generated === 0 && failed > 0) {
+      task.thumbnailError = `共 ${failed} 个视频文件缩略图生成失败，可能是文件格式不受支持或文件损坏。`
     }
   }
 }

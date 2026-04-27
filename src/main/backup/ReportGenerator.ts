@@ -1,3 +1,4 @@
+import * as fs from 'fs'
 import type { BackupTask } from '../types'
 
 function formatBytes(bytes: number): string {
@@ -26,7 +27,7 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-export function generateReport(task: BackupTask): Buffer {
+export async function generateReport(task: BackupTask, options: { includeThumbnails?: boolean } = {}): Promise<Buffer> {
   const statusLabel =
     task.status === 'completed' ? '备份成功' :
     task.status === 'failed' ? '备份失败' : '部分完成'
@@ -48,16 +49,28 @@ export function generateReport(task: BackupTask): Buffer {
       </td>
     </tr>`).join('')
 
-  const fileRows = task.fileRecords.map((f) => {
+  const fileRows = (await Promise.all(task.fileRecords.map(async (f) => {
     const allOk = f.destinations.every((d) => d.verified)
+    let thumbCell = ''
+    if (options.includeThumbnails && f.thumbnailPath) {
+      try {
+        const b64 = fs.readFileSync(f.thumbnailPath).toString('base64')
+        thumbCell = `<td style="padding:4px 10px"><img src="data:image/jpeg;base64,${b64}" style="height:48px;width:auto;border-radius:4px;display:block" /></td>`
+      } catch {
+        thumbCell = '<td></td>'
+      }
+    } else if (options.includeThumbnails) {
+      thumbCell = '<td></td>'
+    }
     return `
     <tr>
       <td>${esc(f.relativePath)}</td>
       <td>${formatBytes(f.size)}</td>
       <td class="mono">${esc(f.srcChecksum)}</td>
       <td style="color:${allOk ? '#22c55e' : '#ef4444'}">${allOk ? '✓ 全部通过' : '✗ 校验失败'}</td>
+      ${thumbCell}
     </tr>`
-  }).join('')
+  }))).join('')
 
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -165,7 +178,7 @@ export function generateReport(task: BackupTask): Buffer {
 <div class="section">
   <h2>文件清单</h2>
   <table>
-    <thead><tr><th>文件路径</th><th>大小</th><th>源校验值</th><th>校验结果</th></tr></thead>
+    <thead><tr><th>文件路径</th><th>大小</th><th>源校验值</th><th>校验结果</th>${options.includeThumbnails ? '<th>首帧缩略图</th>' : ''}</tr></thead>
     <tbody>${fileRows}</tbody>
   </table>
 </div>

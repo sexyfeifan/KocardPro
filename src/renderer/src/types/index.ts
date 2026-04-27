@@ -23,6 +23,7 @@ export interface FileRecord {
     checksum: string
     verified: boolean
   }>
+  thumbnailPath?: string
 }
 
 export interface BackupTask {
@@ -44,10 +45,17 @@ export interface BackupTask {
   eta: number
   currentFile: string
   verifyLog: string[]
+  verifyTotalFiles?: number
+  verifyCompletedFiles?: number
   startedAt?: number
   completedAt?: number
   errorMessage?: string
   fileRecords: FileRecord[]
+  skippedFiles?: number
+  skippedBytes?: number
+  priority?: boolean
+  generateThumbnails?: boolean
+  thumbnailError?: string
 }
 
 export interface TaskConfig {
@@ -118,9 +126,10 @@ declare global {
       startTask: (taskId: string) => Promise<{ allowed: boolean; remaining: number }>
       cancelTask: (taskId: string) => Promise<boolean>
       deleteTask: (taskId: string) => Promise<boolean>
+      setPriority: (taskId: string, priority: boolean) => Promise<void>
       getTasks: () => Promise<BackupTask[]>
       getTask: (taskId: string) => Promise<BackupTask | undefined>
-      generateReport: (taskId: string, savePath: string) => Promise<boolean>
+      generateReport: (taskId: string, savePath: string, options?: { includeThumbnails?: boolean }) => Promise<boolean>
       getDriveInfo: (dirPath: string) => Promise<{ total: number; free: number; used: number } | null>
       getSystemInfo: () => Promise<{ platform: string; arch: string; hostname: string }>
       revealInFinder: (filePath: string) => Promise<void>
